@@ -16,6 +16,7 @@ import com.musio.model.AgentTaskMemory;
 import com.musio.model.Song;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.memory.MusicProfileService;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.AssistantMessage;
@@ -29,6 +30,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class AgentRuntime {
@@ -46,6 +52,11 @@ public class AgentRuntime {
     private final AgentToolExecutor toolExecutor;
     private final RecommendationOrchestrator recommendationOrchestrator;
     private final ObjectMapper objectMapper;
+    private final ScheduledExecutorService progressExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "musio-agent-progress-heartbeat");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public AgentRuntime(
             AgentPrompts prompts,
@@ -83,15 +94,26 @@ public class AgentRuntime {
             AgentRunContext.setUserId(userId);
             List<ConversationHistoryMessage> history = conversationHistoryService.load(userId);
             AgentTaskMemory taskMemory = taskMemoryService.read(userId);
+            tracePublisher.publishRequestReceived(runId, request.message());
             // 统一入口：每轮都进入 Agent runtime；respond_only 只是 planner 不调工具的结果。
-            AgentTurnPlan turnPlan = turnPlanner.planTurn(ai, request.message(), history, taskMemory);
+            tracePublisher.publishPlanningRunning(runId);
+            AgentTurnPlan turnPlan;
+            try (TraceHeartbeat ignored = progressHeartbeat(
+                    runId,
+                    "context.turn-plan",
+                    "context",
+                    "规划处理方式",
+                    "还在理解你的表达和最近对话。",
+                    "还在判断这轮是否需要搜索、歌词、评论或推荐能力。"
+            )) {
+                turnPlan = turnPlanner.planTurn(ai, request.message(), history, taskMemory);
+            }
             AgentTaskContext taskContext = turnPlan.toLegacyTaskContext(request.message());
-            boolean traceEnabled = turnPlan.usesTools();
+            boolean traceEnabled = true;
             AgentRunContext.setTraceEnabled(traceEnabled);
             logTurnRuntimePlan(runId, ai, turnPlan, traceEnabled);
-            if (traceEnabled) {
-                tracePublisher.publishIntentRunning(runId);
-                tracePublisher.publishIntentDone(runId);
+            tracePublisher.publishPlanningDone(runId, String.valueOf(turnPlan.disposition()), turnPlan.taskType(), toolNameList(turnPlan.toolCalls()));
+            if (turnPlan.usesTools()) {
                 taskMemoryService.recordTask(
                         userId,
                         taskContext.planningMessage(),
@@ -103,9 +125,27 @@ public class AgentRuntime {
             }
             PreludeContext preludeContext;
             if (traceEnabled && shouldUseRecommendationPrelude(turnPlan, taskContext)) {
-                preludeContext = recommendationPreludeContext(ai, taskContext, taskMemory);
+                try (TraceHeartbeat ignored = progressHeartbeat(
+                        runId,
+                        "context.recommendation-candidates",
+                        "context",
+                        "生成推荐候选",
+                        "还在根据你的场景挑选更合适的歌曲。",
+                        "还在把推荐候选解析成可播放的真实歌曲。"
+                )) {
+                    preludeContext = recommendationPreludeContext(ai, taskContext, taskMemory);
+                }
             } else {
-                preludeContext = traceEnabled ? plannedToolPreludeContext(turnPlan, taskContext) : PreludeContext.empty();
+                try (TraceHeartbeat ignored = progressHeartbeat(
+                        runId,
+                        "tool.execution",
+                        "tool",
+                        "执行音乐能力",
+                        "还在等待音乐能力返回结果。",
+                        "还在整理本轮工具结果。"
+                )) {
+                    preludeContext = turnPlan.usesTools() ? plannedToolPreludeContext(turnPlan, taskContext) : PreludeContext.empty();
+                }
             }
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
             Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext);
@@ -117,15 +157,24 @@ public class AgentRuntime {
             }
             publishSongCards(runId, preludeContext.songs());
             AgentLlmLogger.logRequest("final_answer", ai, prompt);
-            chatModelFactory.chatClient(ai)
-                    .prompt(prompt)
-                    .stream()
-                    .content()
-                    .doOnNext(chunk -> {
-                        AgentLlmLogger.logStreamChunk("final_answer", ai, chunk);
-                        publishAnswerDelta(runId, ai, answerGuard, chunk, traceEnabled, composeStarted);
-                    })
-                    .blockLast();
+            try (TraceHeartbeat ignored = progressHeartbeat(
+                    runId,
+                    "compose.answer",
+                    "compose",
+                    "生成回答",
+                    "还在把音乐结果组织成更自然的回复。",
+                    "还在生成回答内容，马上继续给你。"
+            )) {
+                chatModelFactory.chatClient(ai)
+                        .prompt(prompt)
+                        .stream()
+                        .content()
+                        .doOnNext(chunk -> {
+                            AgentLlmLogger.logStreamChunk("final_answer", ai, chunk);
+                            publishAnswerDelta(runId, ai, answerGuard, chunk, traceEnabled, composeStarted);
+                        })
+                        .blockLast();
+            }
             answerGuard.finish(rawToolProtocolFallback()).ifPresent(text -> publishAnswerText(runId, ai, text, traceEnabled, composeStarted));
             String answerText = answerGuard.visibleAnswer();
             AgentLlmLogger.logResponse("final_answer.visible", ai, answerText);
@@ -154,6 +203,11 @@ public class AgentRuntime {
         } finally {
             AgentRunContext.clear();
         }
+    }
+
+    @PreDestroy
+    public void shutdownProgressExecutor() {
+        progressExecutor.shutdownNow();
     }
 
     private PreludeContext recommendationPreludeContext(
@@ -527,6 +581,30 @@ public class AgentRuntime {
                 .toList());
     }
 
+    private List<String> toolNameList(List<AgentToolCall> calls) {
+        if (calls == null || calls.isEmpty()) {
+            return List.of();
+        }
+        return calls.stream()
+                .map(AgentToolCall::toolName)
+                .filter(name -> name != null && !name.isBlank())
+                .toList();
+    }
+
+    private TraceHeartbeat progressHeartbeat(String runId, String stepId, String stage, String title, String... messages) {
+        if (messages == null || messages.length == 0) {
+            return TraceHeartbeat.empty();
+        }
+        AtomicInteger counter = new AtomicInteger();
+        ScheduledFuture<?> future = progressExecutor.scheduleAtFixedRate(() -> {
+            int index = counter.getAndIncrement();
+            tracePublisher.publishProgress(runId, stepId, stage, title, messages[index % messages.length], Map.of(
+                    "heartbeat", index + 1
+            ));
+        }, 1500, 2500, TimeUnit.MILLISECONDS);
+        return new TraceHeartbeat(future);
+    }
+
     private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix) {
         static PreludeContext empty() {
             return new PreludeContext("", false, List.of(), "");
@@ -539,6 +617,19 @@ public class AgentRuntime {
 
         private boolean hasSongCards() {
             return !songs.isEmpty();
+        }
+    }
+
+    private record TraceHeartbeat(ScheduledFuture<?> future) implements AutoCloseable {
+        static TraceHeartbeat empty() {
+            return new TraceHeartbeat(null);
+        }
+
+        @Override
+        public void close() {
+            if (future != null) {
+                future.cancel(false);
+            }
         }
     }
 

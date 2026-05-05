@@ -23,6 +23,31 @@ public class AgentTracePublisher {
         publish(runId, "intent.music-task", "intent", "running", "理解音乐任务", "正在判断这次音乐请求要调用哪些能力。", Map.of());
     }
 
+    public void publishRequestReceived(String runId, String userMessage) {
+        publish(runId, "intent.request", "intent", "done", "理解请求", "已收到你的消息，开始判断这次要不要结合音乐能力。", Map.of(
+                "messageLength", userMessage == null ? 0 : userMessage.length()
+        ));
+    }
+
+    public void publishPlanningRunning(String runId) {
+        publish(runId, "context.turn-plan", "context", "running", "规划处理方式", "正在判断是直接回答，还是先搜索、读取歌词、评论或生成推荐。", Map.of());
+    }
+
+    public void publishPlanningDone(String runId, String disposition, String taskType, List<String> toolNames) {
+        List<String> safeToolNames = toolNames == null ? List.of() : toolNames.stream()
+                .filter(name -> name != null && !name.isBlank())
+                .limit(8)
+                .toList();
+        String summary = safeToolNames.isEmpty()
+                ? "这轮会直接组织回复，不需要调用音乐工具。"
+                : "这轮会先使用音乐能力：" + String.join("、", safeToolNames) + "。";
+        publish(runId, "context.turn-plan", "context", "done", "规划处理方式", summary, Map.of(
+                "disposition", disposition == null ? "" : disposition,
+                "taskType", taskType == null ? "" : taskType,
+                "toolNames", safeToolNames
+        ));
+    }
+
     public void publishIntentDone(String runId) {
         publish(runId, "intent.music-task", "intent", "done", "理解音乐任务", "已识别为音乐任务，会结合可用音乐能力生成回答。", Map.of());
     }
@@ -128,6 +153,10 @@ public class AgentTracePublisher {
         publish(runId, "tool." + toolName, "tool", "error", toolTitle(toolName), "工具执行失败：" + safeSummary(message), Map.of(
                 "tool", toolName
         ));
+    }
+
+    public void publishProgress(String runId, String stepId, String stage, String title, String summary, Map<String, Object> safeData) {
+        publish(runId, stepId, stage, "running", title, summary, safeData == null ? Map.of() : safeData);
     }
 
     public boolean shouldTraceUserMessage(String message) {

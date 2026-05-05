@@ -148,7 +148,7 @@ function TraceSteps({ steps, state }: { steps?: TraceStep[]; state: ChatMessage[
   return (
     <div className="trace-steps" aria-label="Musio 当前执行过程">
       <p className="trace-title">{state === "error" ? "Musio 处理遇到问题" : "Musio 正在处理"}</p>
-      <TraceStepRow step={currentStep} index={0} />
+      <TraceStepRow step={currentStep} index={0} typewriter={state === "streaming"} />
     </div>
   );
 }
@@ -175,19 +175,66 @@ function CompletedTraceSteps({ steps }: { steps: TraceStep[] }) {
   );
 }
 
-function TraceStepRow({ step, index }: { step: TraceStep; index: number }) {
+function TraceStepRow({ step, index, typewriter = false }: { step: TraceStep; index: number; typewriter?: boolean }) {
   return (
     <div
-      className={`trace-step ${step.status}`}
+      className={`trace-step ${step.status} ${typewriter ? "typewriter" : ""}`}
       style={{ "--trace-index": index } as CSSProperties}
     >
       <span className="trace-step-status">{traceStatusLabel(step.status)}</span>
       <div>
-        <strong>{step.title}</strong>
-        {step.summary ? <p>{step.summary}</p> : null}
+        <strong>
+          {typewriter ? (
+            <TypewriterText text={step.title} identityKey={`${step.stepId}:${step.status}:title:${step.title}`} />
+          ) : step.title}
+        </strong>
+        {step.summary ? (
+          <p>
+            {typewriter ? (
+              <TypewriterText text={step.summary} identityKey={`${step.stepId}:${step.status}:summary:${step.summary}`} />
+            ) : step.summary}
+          </p>
+        ) : null}
       </div>
     </div>
   );
+}
+
+function TypewriterText({ text, identityKey }: { text: string; identityKey: string }) {
+  const [visibleLength, setVisibleLength] = useState(0);
+
+  useEffect(() => {
+    if (prefersReducedMotion()) {
+      setVisibleLength(text.length);
+      return;
+    }
+
+    setVisibleLength(0);
+    const timer = window.setInterval(() => {
+      setVisibleLength((current) => {
+        if (current >= text.length) {
+          window.clearInterval(timer);
+          return current;
+        }
+        return current + 1;
+      });
+    }, 28);
+
+    return () => window.clearInterval(timer);
+  }, [identityKey, text]);
+
+  const complete = visibleLength >= text.length;
+  return (
+    <span className="typewriter-text">
+      {text.slice(0, visibleLength)}
+      {!complete ? <span className="typewriter-caret" aria-hidden="true" /> : null}
+    </span>
+  );
+}
+
+function prefersReducedMotion() {
+  return typeof window !== "undefined"
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 function currentTraceStep(steps: TraceStep[]) {

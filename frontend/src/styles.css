@@ -1277,6 +1277,27 @@ textarea {
   animation-delay: calc(var(--trace-index, 0) * 120ms + 180ms);
 }
 
+.trace-step.typewriter strong,
+.trace-step.typewriter p {
+  clip-path: none;
+  animation: none;
+}
+
+.typewriter-text {
+  display: inline;
+}
+
+.typewriter-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: -0.12em;
+  animation: typewriter-caret-blink 820ms steps(1, end) infinite;
+}
+
 @keyframes trace-step-enter {
   from {
     opacity: 0;
@@ -1294,6 +1315,23 @@ textarea {
   }
   to {
     clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes typewriter-caret-blink {
+  0%,
+  48% {
+    opacity: 1;
+  }
+  49%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typewriter-caret {
+    display: none;
   }
 }
 
