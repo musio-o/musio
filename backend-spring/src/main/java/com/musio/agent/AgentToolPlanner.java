@@ -24,7 +24,7 @@ public class AgentToolPlanner {
     private static final Logger log = LoggerFactory.getLogger(AgentToolPlanner.class);
     private static final double MIN_CONFIDENCE = 0.55;
     private static final int MAX_TOOL_CALLS = 12;
-    private static final int DEFAULT_SEARCH_LIMIT = 8;
+    private static final int DEFAULT_SEARCH_LIMIT = 5;
     private static final Set<String> ALLOWED_TOOLS = Set.of(
             "search_songs",
             "get_user_music_profile",
@@ -183,7 +183,7 @@ public class AgentToolPlanner {
                 - 只规划回答当前问题真正需要的工具；不需要工具时输出空数组。
                 - 如果当前任务上下文有目标歌曲 ID，就优先用该 songId 作为歌曲类工具参数。
                 - 不要编造 songId、playlistId 或用户没有提供的标识符。
-                - 搜索类任务应规划 search_songs；keyword 只写正向搜索目标，limit 使用用户要求的数量，没有要求时默认 8。
+                - 搜索类任务应规划 search_songs；keyword 只写正向搜索目标，limit 使用用户要求的数量，没有要求时默认 5。
                 - 如果 playback 任务带有 searchKeyword 且没有目标歌曲 ID，说明本轮仍需要先找到候选歌曲，应规划 search_songs；纯暂停、继续、上一首、下一首这类控制请求可以不规划只读工具。
                 - 如果任务上下文要求避免重复歌曲，把这些歌名放入 search_songs.arguments.excludedTitles，不要拼进 keyword。
                 - 推荐类任务不要把“深夜写代码”“适合睡前”等场景词直接当唯一搜索词；应先挑出具体歌曲查询，规划多个 search_songs，每个 limit=1，查询格式优先“歌曲名 歌手”。

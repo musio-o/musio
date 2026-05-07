@@ -28,7 +28,7 @@ public class AgentTurnPlanner {
     private static final Logger log = LoggerFactory.getLogger(AgentTurnPlanner.class);
     private static final double MIN_CONFIDENCE = 0.55;
     private static final int MAX_TOOL_CALLS = 12;
-    private static final int DEFAULT_SEARCH_LIMIT = 8;
+    private static final int DEFAULT_SEARCH_LIMIT = 5;
     private static final Set<String> ALLOWED_TOOLS = Set.of(
             "recommend_songs",
             "search_songs",
@@ -331,7 +331,7 @@ public class AgentTurnPlanner {
                 - taskType 必须描述本轮主能力：如果主要工具是 search_songs 且目标是查找/替换候选歌曲，使用 taskType=search；如果主要工具是 recommend_songs，使用 taskType=recommend。
                 - 如果用户在纠正上一轮音乐搜索目标，例如说明刚才的歌手、歌名或关键词说错了，使用 contextMode=correction，并基于纠正后的正向目标规划 search_songs。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
-                - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 8。
+                - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 5。
                 - recommend_songs.arguments.count 必须显式填写。根据当前用户输入和 effectiveRequest 的推荐数量填写；完全没有数量含义时默认 5。
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
@@ -407,6 +407,13 @@ public class AgentTurnPlanner {
                     .map(this::songRef)
                     .filter(ref -> !ref.isBlank())
                     .toList()));
+        }
+        if (memory.lastTargetSong() != null) {
+            appendLine(builder, "lastTargetSong", songRef(memory.lastTargetSong()));
+        }
+        appendLine(builder, "lastCompletedTaskType", memory.lastCompletedTaskType());
+        if (memory.lastObservationSummaries() != null && !memory.lastObservationSummaries().isEmpty()) {
+            appendLine(builder, "lastObservationSummaries", String.join("；", memory.lastObservationSummaries().stream().limit(5).toList()));
         }
         if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
             appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));

@@ -13,6 +13,7 @@ import java.util.List;
 public class AgentTaskMemoryService {
     private static final int MAX_RESULT_SONGS = 20;
     private static final int MAX_FAILURES = 5;
+    private static final int MAX_OBSERVATION_SUMMARIES = 8;
 
     private final AgentTaskMemoryStore store;
 
@@ -55,6 +56,9 @@ public class AgentTaskMemoryService {
                 preservePreviousSongContext ? previous.lastResultSongTitles() : List.of(),
                 limitedStrings(avoidSongTitles, 20),
                 sameTask ? previous.lastToolFailures() : List.of(),
+                preservePreviousSongContext ? previous.lastTargetSong() : null,
+                preservePreviousSongContext ? previous.lastCompletedTaskType() : "",
+                preservePreviousSongContext ? previous.lastObservationSummaries() : List.of(),
                 Instant.now()
         );
         store.write(userId, next);
@@ -80,6 +84,30 @@ public class AgentTaskMemoryService {
                         .toList(),
                 previous.avoidSongTitles(),
                 List.of(),
+                limitedSongs.isEmpty() ? previous.lastTargetSong() : limitedSongs.getFirst(),
+                previous.lastCompletedTaskType(),
+                previous.lastObservationSummaries(),
+                Instant.now()
+        );
+        store.write(userId, next);
+        return next;
+    }
+
+    public AgentTaskMemory recordLoopEvidence(String userId, Song targetSong, String completedTaskType, List<String> observationSummaries) {
+        AgentTaskMemory previous = read(userId);
+        AgentTaskMemory next = new AgentTaskMemory(
+                userId,
+                previous.currentTask(),
+                previous.lastEffectiveRequest(),
+                previous.lastSearchKeyword(),
+                previous.lastSearchLimit(),
+                previous.lastResultSongs(),
+                previous.lastResultSongTitles(),
+                previous.avoidSongTitles(),
+                previous.lastToolFailures(),
+                targetSong == null ? previous.lastTargetSong() : targetSong,
+                safe(completedTaskType).isBlank() ? previous.lastCompletedTaskType() : safe(completedTaskType),
+                limitedStrings(observationSummaries, MAX_OBSERVATION_SUMMARIES),
                 Instant.now()
         );
         store.write(userId, next);
@@ -101,6 +129,9 @@ public class AgentTaskMemoryService {
                 previous.lastResultSongTitles(),
                 previous.avoidSongTitles(),
                 failures.stream().limit(MAX_FAILURES).toList(),
+                previous.lastTargetSong(),
+                previous.lastCompletedTaskType(),
+                previous.lastObservationSummaries(),
                 Instant.now()
         );
         store.write(userId, next);

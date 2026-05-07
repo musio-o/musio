@@ -185,6 +185,9 @@ class AgentTaskContextResolverTest {
                 List.of("晴天"),
                 List.of("晴天"),
                 List.of(),
+                null,
+                "",
+                List.of(),
                 java.time.Instant.now()
         );
 
@@ -206,6 +209,9 @@ class AgentTaskContextResolverTest {
                 List.of("Always Online"),
                 List.of(),
                 List.of(),
+                null,
+                "",
+                List.of(),
                 java.time.Instant.now()
         );
 
@@ -225,6 +231,9 @@ class AgentTaskContextResolverTest {
                 List.of(),
                 List.of("信封", "程序员生活"),
                 List.of("信封", "程序员生活"),
+                List.of(),
+                null,
+                "",
                 List.of(),
                 java.time.Instant.now()
         );
@@ -256,6 +265,9 @@ class AgentTaskContextResolverTest {
                 List.of(),
                 List.of("信封", "程序员生活"),
                 List.of("信封", "程序员生活"),
+                List.of(),
+                null,
+                "",
                 List.of(),
                 java.time.Instant.now()
         );

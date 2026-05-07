@@ -3,6 +3,12 @@ package com.musio.agent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.ai.SpringAiChatModelFactory;
+import com.musio.agent.loop.AgentLoopEvidence;
+import com.musio.agent.loop.AgentLoopRunner;
+import com.musio.agent.loop.AgentLoopState;
+import com.musio.agent.loop.AgentObservation;
+import com.musio.agent.loop.AgentStepAction;
+import com.musio.agent.loop.AgentStepActionType;
 import com.musio.agent.recommendation.RecommendationOrchestrator;
 import com.musio.agent.recommendation.RecommendationResponse;
 import com.musio.agent.trace.AgentTracePublisher;
@@ -52,6 +58,7 @@ public class AgentRuntime {
     private final AgentTracePublisher tracePublisher;
     private final AgentTurnPlanner turnPlanner;
     private final AgentToolExecutor toolExecutor;
+    private final AgentLoopRunner agentLoopRunner;
     private final RecommendationOrchestrator recommendationOrchestrator;
     private final MusioPlaylistService musioPlaylistService;
     private final ObjectMapper objectMapper;
@@ -72,6 +79,7 @@ public class AgentRuntime {
             AgentTracePublisher tracePublisher,
             AgentTurnPlanner turnPlanner,
             AgentToolExecutor toolExecutor,
+            AgentLoopRunner agentLoopRunner,
             RecommendationOrchestrator recommendationOrchestrator,
             MusioPlaylistService musioPlaylistService,
             ObjectMapper objectMapper
@@ -86,6 +94,7 @@ public class AgentRuntime {
         this.tracePublisher = tracePublisher;
         this.turnPlanner = turnPlanner;
         this.toolExecutor = toolExecutor;
+        this.agentLoopRunner = agentLoopRunner;
         this.recommendationOrchestrator = recommendationOrchestrator;
         this.musioPlaylistService = musioPlaylistService;
         this.objectMapper = objectMapper;
@@ -119,7 +128,7 @@ public class AgentRuntime {
             logTurnRuntimePlan(runId, ai, turnPlan, traceEnabled);
             tracePublisher.publishPlanningDone(runId, String.valueOf(turnPlan.disposition()), turnPlan.taskType(), toolNameList(turnPlan.toolCalls()));
             if (turnPlan.usesTools()) {
-                taskMemoryService.recordTask(
+                taskMemory = taskMemoryService.recordTask(
                         userId,
                         taskContext.planningMessage(),
                         taskContext.searchKeyword(),
@@ -128,7 +137,7 @@ public class AgentRuntime {
                         taskContext.preservePreviousSongContext()
                 );
             }
-            if (turnPlan.hasTool("add_song_to_musio_playlist")) {
+            if (turnPlan.hasOnlyLocalWriteTools()) {
                 handleMusioPlaylistAdd(runId, ai, userId, request.message(), history, taskMemory, turnPlan, traceEnabled);
                 return;
             }
@@ -153,8 +162,20 @@ public class AgentRuntime {
                         "还在等待音乐能力返回结果。",
                         "还在整理本轮工具结果。"
                 )) {
-                    preludeContext = turnPlan.usesTools() ? plannedToolPreludeContext(turnPlan, taskContext) : PreludeContext.empty();
+                    preludeContext = turnPlan.usesTools()
+                            ? agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, taskContext, turnPlan)
+                            : PreludeContext.empty();
                 }
+            }
+            if (turnPlan.hasLocalWriteTools()) {
+                LocalPlaylistAddResult playlistAddResult = executeMusioPlaylistAdd(
+                        runId,
+                        history,
+                        taskMemory,
+                        turnPlan,
+                        preludeContext.songs()
+                );
+                preludeContext = withPlaylistAddResult(preludeContext, playlistAddResult);
             }
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
             Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext);
@@ -229,34 +250,7 @@ public class AgentRuntime {
             AgentTurnPlan turnPlan,
             boolean traceEnabled
     ) {
-        AgentToolCall call = firstToolCall(turnPlan, "add_song_to_musio_playlist");
-        Map<String, Object> arguments = call == null || call.arguments() == null ? Map.of() : call.arguments();
-        String playlistId = text(arguments, "playlistId").isBlank() ? "default" : text(arguments, "playlistId");
-        Map<String, Object> input = musioPlaylistAddInput(playlistId, arguments);
-        publishToolStart(runId, "add_song_to_musio_playlist", input);
-        tracePublisher.publishToolRunning(runId, "add_song_to_musio_playlist", input);
-
-        LocalPlaylistAddResult result;
-        try {
-            Song song = resolveMusioPlaylistSong(arguments, history, taskMemory);
-            if (song == null) {
-                result = LocalPlaylistAddResult.failure("还没能确定要收藏哪一首歌。你可以告诉我歌名，或先让我推荐/搜索出歌曲卡片。");
-            } else {
-                boolean existed = playlistContains(playlistId, song.id());
-                MusioPlaylist playlist = musioPlaylistService.addSong(playlistId, song);
-                result = LocalPlaylistAddResult.success(song, playlist, existed);
-            }
-        } catch (Exception e) {
-            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-            result = LocalPlaylistAddResult.failure("收藏失败：" + message);
-        }
-
-        publishToolResult(runId, "add_song_to_musio_playlist", result.toolResult());
-        if (result.success()) {
-            tracePublisher.publishToolDone(runId, "add_song_to_musio_playlist", result.toolResult());
-        } else {
-            tracePublisher.publishToolError(runId, "add_song_to_musio_playlist", result.message());
-        }
+        LocalPlaylistAddResult result = executeMusioPlaylistAdd(runId, history, taskMemory, turnPlan, List.of());
 
         boolean[] composeStarted = {false};
         if (result.success()) {
@@ -278,16 +272,56 @@ public class AgentRuntime {
         eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
     }
 
+    private LocalPlaylistAddResult executeMusioPlaylistAdd(
+            String runId,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory,
+            AgentTurnPlan turnPlan,
+            List<Song> currentSongs
+    ) {
+        AgentToolCall call = firstToolCall(turnPlan, "add_song_to_musio_playlist");
+        Map<String, Object> arguments = call == null || call.arguments() == null ? Map.of() : call.arguments();
+        String playlistId = text(arguments, "playlistId").isBlank() ? "default" : text(arguments, "playlistId");
+        Map<String, Object> input = musioPlaylistAddInput(playlistId, arguments);
+        publishToolStart(runId, "add_song_to_musio_playlist", input);
+        tracePublisher.publishToolRunning(runId, "add_song_to_musio_playlist", input);
+
+        LocalPlaylistAddResult result;
+        try {
+            Song song = resolveMusioPlaylistSong(arguments, history, taskMemory, currentSongs);
+            if (song == null) {
+                result = LocalPlaylistAddResult.failure("还没能确定要收藏哪一首歌。你可以告诉我歌名，或先让我推荐/搜索出歌曲卡片。");
+            } else {
+                boolean existed = playlistContains(playlistId, song.id());
+                MusioPlaylist playlist = musioPlaylistService.addSong(playlistId, song);
+                result = LocalPlaylistAddResult.success(song, playlist, existed);
+            }
+        } catch (Exception e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            result = LocalPlaylistAddResult.failure("收藏失败：" + message);
+        }
+
+        publishToolResult(runId, "add_song_to_musio_playlist", result.toolResult());
+        if (result.success()) {
+            tracePublisher.publishToolDone(runId, "add_song_to_musio_playlist", result.toolResult());
+        } else {
+            tracePublisher.publishToolError(runId, "add_song_to_musio_playlist", result.message());
+        }
+
+        return result;
+    }
+
     private Song resolveMusioPlaylistSong(
             Map<String, Object> arguments,
             List<ConversationHistoryMessage> history,
-            AgentTaskMemory taskMemory
+            AgentTaskMemory taskMemory,
+            List<Song> currentSongs
     ) {
         String songId = text(arguments, "songId");
         String songTitle = text(arguments, "songTitle");
         String artist = text(arguments, "artist");
         Integer songIndex = integer(arguments, "songIndex");
-        List<Song> candidates = recentSongs(history, taskMemory);
+        List<Song> candidates = recentSongs(history, taskMemory, currentSongs);
         Song fromContext = resolveFromCandidates(candidates, songId, songTitle, artist, songIndex);
         if (fromContext != null) {
             return fromContext;
@@ -343,8 +377,13 @@ public class AgentRuntime {
         return candidates.getFirst();
     }
 
-    private List<Song> recentSongs(List<ConversationHistoryMessage> history, AgentTaskMemory taskMemory) {
+    private List<Song> recentSongs(List<ConversationHistoryMessage> history, AgentTaskMemory taskMemory, List<Song> currentSongs) {
         Map<String, Song> songsById = new LinkedHashMap<>();
+        if (currentSongs != null) {
+            for (Song song : currentSongs) {
+                addSongCandidate(songsById, song);
+            }
+        }
         if (history != null) {
             for (int index = history.size() - 1; index >= 0; index--) {
                 ConversationHistoryMessage message = history.get(index);
@@ -387,6 +426,23 @@ public class AgentRuntime {
                 .filter(call -> call != null && toolName.equals(call.toolName()))
                 .findFirst()
                 .orElse(null);
+    }
+
+    private List<AgentStepAction> loopInitialActions(AgentTurnPlan turnPlan) {
+        if (turnPlan == null || turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty()) {
+            return List.of();
+        }
+        return turnPlan.readOnlyLoopToolCalls().stream()
+                .limit(1)
+                .map(call -> new AgentStepAction(
+                        AgentStepActionType.TOOL_CALL,
+                        call.toolName(),
+                        call.arguments() == null ? Map.of() : call.arguments(),
+                        "执行已规划音乐能力",
+                        turnPlan.confidence(),
+                        "turn_planner_seed"
+                ))
+                .toList();
     }
 
     private Map<String, Object> musioPlaylistAddInput(String playlistId, Map<String, Object> arguments) {
@@ -511,7 +567,118 @@ public class AgentRuntime {
             return false;
         }
         // Planner 的显式工具计划优先；legacy recommendation 不能覆盖已声明的 search_songs 等工具调用。
-        return turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty() || turnPlan.hasTool("recommend_songs");
+        return turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty() || turnPlan.hasRecommendationTool();
+    }
+
+    private PreludeContext agentLoopPreludeContext(
+            MusioConfig.Ai ai,
+            String runId,
+            String userId,
+            String userMessage,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory,
+            AgentTaskContext taskContext,
+            AgentTurnPlan turnPlan
+    ) {
+        AgentLoopEvidence evidence = agentLoopRunner.run(ai, new AgentLoopState(
+                runId,
+                userId,
+                userMessage,
+                history,
+                taskMemory,
+                List.of(),
+                0
+        ), loopInitialActions(turnPlan));
+        if (evidence.hasObservations()) {
+            taskMemoryService.recordLoopEvidence(
+                    userId,
+                    evidence.targetSong(),
+                    evidence.completedTaskType(),
+                    evidence.observationSummaries()
+            );
+        }
+        log.info(
+                "TURN_EXECUTOR stage=agent_loop runId={} userId={} taskType={} observationCount={} songCardCount={} songCardTitles={}",
+                runId,
+                userId,
+                taskContext.taskType(),
+                evidence.observations().size(),
+                evidence.songs().size(),
+                songTitles(evidence.songs())
+        );
+        if (!evidence.hasObservations()) {
+            if (taskContext.toolEvidenceExpected()) {
+                return new PreludeContext("""
+
+                        本轮 Agent loop 没有产生可执行的真实工具结果。
+                        最终回答不得声称“已读取 QQ 音乐详情/评论/歌词/歌单”等没有真实发生的工具调用。
+                        最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
+                        必须直接用自然语言回答；如果缺少真实工具结果，请明确说明本轮没有拿到对应真实工具结果。
+                        """, false, List.of(), "");
+            }
+            return PreludeContext.empty();
+        }
+        return new PreludeContext("""
+
+                本轮 Agent loop 已根据工具 observation 逐步执行这些只读音乐能力：
+                %s
+                本轮歌曲卡片顺序是：
+                %s
+                最终回答必须基于这些真实 observations；不要声称调用了没有出现在上方结果里的工具。
+                如果最终回答正文列出歌曲，必须严格按照上面的歌曲卡片顺序输出，不要重排、补歌或改写歌手。
+                工具状态以“状态”行和 result.success 为准：success=true 的工具不得写成失败、HTTP 500 或没有拿到结果。
+                如果评论、歌词或详情 observation 不存在，正文不得声称已经读取到对应内容。
+                工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
+                你必须直接生成面向用户的中文自然语言回答。
+                """.formatted(loopExecutionContext(evidence.observations()), songTitles(evidence.songs())),
+                true,
+                evidence.songs(),
+                "");
+    }
+
+    private PreludeContext withPlaylistAddResult(PreludeContext context, LocalPlaylistAddResult result) {
+        PreludeContext base = context == null ? PreludeContext.empty() : context;
+        if (result == null) {
+            return base;
+        }
+        List<Song> songs = result.success()
+                ? mergeSongs(base.songs(), List.of(result.song()))
+                : base.songs();
+        String text = (base.text() + "\n\n" + playlistAddContext(result)).strip();
+        return new PreludeContext(text, true, songs, base.answerPrefix());
+    }
+
+    private String playlistAddContext(LocalPlaylistAddResult result) {
+        Map<String, Object> toolResult = result.toolResult();
+        return """
+
+                本轮还执行了 Musio 本地歌单写入：
+                工具：add_song_to_musio_playlist
+                状态：%s
+                摘要：%s
+                结果 JSON：%s
+
+                最终回答必须同时完成用户这轮请求中的所有部分：如果上方只读音乐 evidence 里有评论、歌词、详情或搜索结果，先基于它们回答；同时明确说明 Musio 歌单收藏结果。不要只回复歌单收藏结果。
+                """.formatted(
+                result.success() ? "SUCCESS" : "FAILURE",
+                String.valueOf(toolResult.getOrDefault("summary", result.answerText())),
+                writeJson(toolResult)
+        ).strip();
+    }
+
+    private List<Song> mergeSongs(List<Song> primary, List<Song> extra) {
+        Map<String, Song> songsById = new LinkedHashMap<>();
+        if (primary != null) {
+            for (Song song : primary) {
+                addSongCandidate(songsById, song);
+            }
+        }
+        if (extra != null) {
+            for (Song song : extra) {
+                addSongCandidate(songsById, song);
+            }
+        }
+        return List.copyOf(songsById.values());
     }
 
     private void publishAnswerDelta(String runId, MusioConfig.Ai ai, AgentAnswerStreamGuard answerGuard, String chunk, boolean traceEnabled, boolean[] composeStarted) {
@@ -575,67 +742,6 @@ public class AgentRuntime {
         return new Prompt(messages);
     }
 
-    private PreludeContext plannedToolPreludeContext(AgentTurnPlan turnPlan, AgentTaskContext taskContext) {
-        AgentToolPlan plan = turnPlan.toToolPlan();
-        List<AgentToolExecution> executions = toolExecutor.execute(plan);
-        AgentTurnEvidence evidence = new AgentTurnEvidence(executions, songsFromExecutions(executions));
-        log.info(
-                "TURN_EXECUTOR stage=tool_executor runId={} userId={} disposition={} taskType={} toolCallCount={} toolNames={} executionCount={} songCardCount={} songCardTitles={}",
-                AgentRunContext.runId().orElse("-"),
-                AgentRunContext.userId().orElse("-"),
-                turnPlan.disposition(),
-                turnPlan.taskType(),
-                plan.toolCalls() == null ? 0 : plan.toolCalls().size(),
-                toolNames(plan.toolCalls()),
-                evidence.executions().size(),
-                evidence.songs().size(),
-                songTitles(evidence.songs())
-        );
-        if (evidence.executions().isEmpty()) {
-            if (taskContext.toolEvidenceExpected()) {
-                return new PreludeContext("""
-
-                        本轮工具规划器没有产生可执行的真实工具结果。
-                        最终回答不得声称“已读取 QQ 音乐详情/评论/歌词/歌单”等没有真实发生的工具调用。
-                        最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
-                        必须直接用自然语言回答；如果缺少真实工具结果，请明确说明本轮没有拿到对应真实工具结果。
-                        """, false, List.of(), "");
-            }
-            return PreludeContext.empty();
-        }
-        return new PreludeContext("""
-
-                本轮工具规划器已根据任务上下文决定并执行这些只读音乐工具：
-                %s
-                本轮歌曲卡片顺序是：
-                %s
-                最终回答必须基于这些真实工具结果；不要声称调用了没有出现在上方结果里的工具。
-                如果最终回答正文列出歌曲，必须严格按照上面的歌曲卡片顺序输出，不要重排、补歌或改写歌手。
-                当前工具结果优先于历史对话、任务记忆和上一轮失败描述；不要把历史里的 HTTP 500 当成本轮结果。
-                工具状态以“状态”行和 result.success 为准：success=true 的工具不得写成失败、HTTP 500 或没有拿到结果。
-                如果工具成功但结果相关性不高，应说明“QQ 音乐返回结果不够准确”，不要改写成接口失败。
-                如果 success=true 且返回了歌曲，正文必须承认本轮拿到了这些实时搜索结果；可以评价相关性，但不能说“没有拿到实时结果”。
-                如果 search_songs 返回了歌曲，正文列出的主推荐歌曲必须来自本轮结果 JSON；不要一边展示工具歌曲卡片，一边正文列出另一批未查询歌曲。
-                工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
-                你必须直接生成面向用户的中文自然语言回答。
-                """.formatted(toolExecutionContext(evidence.executions()), songTitles(evidence.songs())),
-                true,
-                evidence.songs(),
-                "");
-    }
-
-    private List<Song> songsFromExecutions(List<AgentToolExecution> executions) {
-        Map<String, Song> songsById = new LinkedHashMap<>();
-        for (AgentToolExecution execution : executions) {
-            for (Song song : songsFromResultJson(execution.resultJson())) {
-                if (song != null && song.id() != null && !song.id().isBlank()) {
-                    songsById.putIfAbsent(song.id(), song);
-                }
-            }
-        }
-        return List.copyOf(songsById.values());
-    }
-
     private List<Song> songsFromResultJson(String resultJson) {
         if (resultJson == null || resultJson.isBlank()) {
             return List.of();
@@ -659,13 +765,15 @@ public class AgentRuntime {
         }
     }
 
-    private String toolExecutionContext(List<AgentToolExecution> executions) {
+    private String loopExecutionContext(List<AgentObservation> observations) {
         StringBuilder builder = new StringBuilder();
-        for (AgentToolExecution execution : executions) {
-            builder.append("工具：").append(execution.toolName()).append('\n');
-            builder.append("参数：").append(writeJson(execution.arguments())).append('\n');
-            builder.append("状态：").append(toolResultStatus(execution.resultJson())).append('\n');
-            builder.append("结果 JSON：").append(execution.resultJson()).append("\n\n");
+        for (AgentObservation observation : observations) {
+            builder.append("步骤：").append(observation.stepId()).append('\n');
+            builder.append("工具：").append(observation.toolName()).append('\n');
+            builder.append("参数：").append(writeJson(observation.arguments())).append('\n');
+            builder.append("状态：").append(observation.status()).append('\n');
+            builder.append("摘要：").append(observation.plannerSummary()).append('\n');
+            builder.append("结果 JSON：").append(observation.resultJson()).append("\n\n");
         }
         return builder.toString().strip();
     }
@@ -712,81 +820,6 @@ public class AgentRuntime {
                 .map(song -> song.title() == null || song.title().isBlank() ? song.id() : song.title())
                 .filter(title -> title != null && !title.isBlank())
                 .toList());
-    }
-
-    private String toolResultStatus(String resultJson) {
-        if (resultJson == null || resultJson.isBlank()) {
-            return "未知，工具没有返回 JSON 文本";
-        }
-        try {
-            JsonNode root = objectMapper.readTree(resultJson);
-            JsonNode successNode = root.path("success");
-            if (successNode.isBoolean() && successNode.asBoolean()) {
-                List<String> parts = new ArrayList<>();
-                parts.add("成功");
-                JsonNode countNode = root.path("count");
-                if (countNode.isNumber()) {
-                    parts.add("返回 " + countNode.asInt() + " 条结果");
-                }
-                String resultPreview = toolResultPreview(root);
-                if (!resultPreview.isBlank()) {
-                    parts.add(resultPreview);
-                }
-                return String.join("，", parts);
-            }
-            if (successNode.isBoolean()) {
-                String message = root.path("message").isTextual() ? root.path("message").asText() : "未提供错误原因";
-                return "失败，原因：" + message;
-            }
-            return "未知，结果 JSON 没有 success 字段";
-        } catch (Exception e) {
-            return "未知，结果 JSON 解析失败";
-        }
-    }
-
-    private String toolResultPreview(JsonNode root) {
-        JsonNode songs = root.path("songs");
-        if (songs.isArray() && songs.size() > 0) {
-            List<String> previews = new ArrayList<>();
-            for (JsonNode song : songs) {
-                String title = song.path("title").asText("");
-                String artists = artistPreview(song.path("artists"));
-                if (!title.isBlank()) {
-                    previews.add(artists.isBlank() ? title : title + " - " + artists);
-                }
-                if (previews.size() >= 5) {
-                    break;
-                }
-            }
-            if (!previews.isEmpty()) {
-                return "歌曲：" + String.join("；", previews);
-            }
-        }
-        JsonNode comments = root.path("comments");
-        if (comments.isArray()) {
-            return "评论 " + comments.size() + " 条";
-        }
-        JsonNode playlists = root.path("playlists");
-        if (playlists.isArray()) {
-            return "歌单 " + playlists.size() + " 个";
-        }
-        return "";
-    }
-
-    private String artistPreview(JsonNode artists) {
-        if (!artists.isArray() || artists.size() == 0) {
-            return "";
-        }
-        List<String> values = new ArrayList<>();
-        for (JsonNode artist : artists) {
-            if (artist.isTextual() && !artist.asText().isBlank()) {
-                values.add(artist.asText());
-            }
-            if (values.size() >= 3) {
-                break;
-            }
-        }
-        return String.join("/", values);
     }
 
     private String writeJson(Object value) {

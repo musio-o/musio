@@ -53,8 +53,8 @@ public class MusicReadTools {
     @Tool(name = "search_songs", description = "Search QQ Music songs by keyword. Use this when the user asks to find songs, recommend tracks, or discover music.")
     public String searchSongs(
             @ToolParam(description = "Search keyword, such as a song title, artist, mood, scene, or genre") String keyword,
-            @ToolParam(description = "Maximum number of songs to return. Default 8, maximum 20") Integer limit) {
-        int actualLimit = clamp(limit, 8, 1, 20);
+            @ToolParam(description = "Maximum number of songs to return. Default 5, maximum 20") Integer limit) {
+        int actualLimit = clamp(limit, 5, 1, 20);
         return runTool("search_songs", Map.of("keyword", keyword, "limit", actualLimit), () -> {
             List<Song> songs = providerGateway.defaultProvider().searchSongs(keyword, actualLimit);
             publish("song_cards", Map.of("songs", songs));
@@ -63,7 +63,7 @@ public class MusicReadTools {
     }
 
     public String searchSongsExcludingTitles(String keyword, Integer limit, List<String> excludedTitles) {
-        int actualLimit = clamp(limit, 8, 1, 20);
+        int actualLimit = clamp(limit, 5, 1, 20);
         List<String> normalizedExclusions = normalizedTitles(excludedTitles);
         if (normalizedExclusions.isEmpty()) {
             return searchSongs(keyword, actualLimit);

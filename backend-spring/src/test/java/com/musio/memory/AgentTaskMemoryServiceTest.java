@@ -31,6 +31,7 @@ class AgentTaskMemoryServiceTest {
         assertEquals("周杰伦", memory.lastSearchKeyword());
         assertEquals(1, memory.lastSearchLimit());
         assertEquals(List.of("枫"), memory.lastResultSongTitles());
+        assertEquals("qqmusic:1", memory.lastTargetSong().id());
         assertEquals(List.of("晴天"), memory.avoidSongTitles());
     }
 
@@ -57,6 +58,7 @@ class AgentTaskMemoryServiceTest {
         service.recordTask("local", "搜索林俊杰的一首歌曲", "林俊杰", 1, List.of());
 
         assertTrue(service.read("local").lastResultSongTitles().isEmpty());
+        assertEquals(null, service.read("local").lastTargetSong());
     }
 
     @Test
@@ -72,6 +74,21 @@ class AgentTaskMemoryServiceTest {
         AgentTaskMemory memory = service.read("local");
         assertEquals(List.of("Always Online"), memory.lastResultSongTitles());
         assertEquals("qqmusic:1", memory.lastResultSongs().getFirst().id());
+        assertEquals("qqmusic:1", memory.lastTargetSong().id());
+    }
+
+    @Test
+    void recordsLoopEvidenceSummaryWithoutRawResults() {
+        AgentTaskMemoryService service = service();
+        Song song = new Song("qqmusic:1", ProviderType.QQMUSIC, "晴天", List.of("周杰伦"), "叶惠美", 269, null);
+
+        service.recordTask("local", "搜索周杰伦并分享评论", "周杰伦", 1, List.of());
+        service.recordLoopEvidence("local", song, "comments", List.of("search_songs 成功，歌曲 1 首：晴天 id=qqmusic:1", "get_hot_comments 成功，评论 1 条"));
+
+        AgentTaskMemory memory = service.read("local");
+        assertEquals("qqmusic:1", memory.lastTargetSong().id());
+        assertEquals("comments", memory.lastCompletedTaskType());
+        assertEquals(2, memory.lastObservationSummaries().size());
     }
 
     private AgentTaskMemoryService service() {

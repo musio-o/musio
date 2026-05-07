@@ -68,7 +68,7 @@ export const api = {
       body: JSON.stringify({ userId: "local", message })
     }),
   chatHistory: (userId = "local") => request<ChatHistoryMessage[]>(`/api/chat/history/${encodeURIComponent(userId)}`),
-  search: (keyword: string, limit = 8) =>
+  search: (keyword: string, limit = 5) =>
     request<Song[]>(`/api/music/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),
   songUrl: (songId: string) => request<SongUrl>(`/api/music/songs/${encodeURIComponent(songId)}/url`),
   lyrics: (songId: string) => request<Lyrics>(`/api/music/songs/${encodeURIComponent(songId)}/lyrics`),

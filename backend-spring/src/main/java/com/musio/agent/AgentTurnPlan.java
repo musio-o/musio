@@ -1,9 +1,8 @@
 package com.musio.agent;
 
-import com.musio.model.Song;
-
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 record AgentTurnPlan(
         TurnDisposition disposition,
@@ -15,6 +14,18 @@ record AgentTurnPlan(
         double confidence,
         String fallbackReason
 ) {
+    private static final Set<String> READ_ONLY_LOOP_TOOLS = Set.of(
+            "search_songs",
+            "get_user_music_profile",
+            "get_song_detail",
+            "get_lyrics",
+            "get_hot_comments",
+            "get_user_playlists",
+            "get_playlist_songs"
+    );
+    private static final Set<String> RECOMMENDATION_TOOLS = Set.of("recommend_songs");
+    private static final Set<String> LOCAL_WRITE_TOOLS = Set.of("add_song_to_musio_playlist");
+
     static AgentTurnPlan respondOnly(String effectiveRequest, double confidence, String fallbackReason) {
         return new AgentTurnPlan(
                 TurnDisposition.RESPOND_ONLY,
@@ -33,9 +44,7 @@ record AgentTurnPlan(
             return AgentToolPlan.empty();
         }
         List<AgentToolCall> executableCalls = toolCalls.stream()
-                .filter(call -> call != null
-                        && !"recommend_songs".equals(call.toolName())
-                        && !"add_song_to_musio_playlist".equals(call.toolName()))
+                .filter(this::isReadOnlyLoopTool)
                 .toList();
         return new AgentToolPlan(executableCalls, confidence);
     }
@@ -69,13 +78,38 @@ record AgentTurnPlan(
         return disposition == TurnDisposition.USE_TOOLS && toolCalls != null && !toolCalls.isEmpty();
     }
 
+    boolean hasLocalWriteTools() {
+        return localWriteToolCalls().stream().findAny().isPresent();
+    }
+
+    boolean hasOnlyLocalWriteTools() {
+        List<AgentToolCall> executableCalls = nonBlankToolCalls();
+        return !executableCalls.isEmpty() && executableCalls.stream().allMatch(this::isLocalWriteTool);
+    }
+
+    boolean hasRecommendationTool() {
+        return nonBlankToolCalls().stream().anyMatch(this::isRecommendationTool);
+    }
+
+    List<AgentToolCall> readOnlyLoopToolCalls() {
+        return nonBlankToolCalls().stream()
+                .filter(this::isReadOnlyLoopTool)
+                .toList();
+    }
+
+    List<AgentToolCall> localWriteToolCalls() {
+        return nonBlankToolCalls().stream()
+                .filter(this::isLocalWriteTool)
+                .toList();
+    }
+
     boolean hasTool(String toolName) {
         return toolCalls != null && toolCalls.stream()
                 .anyMatch(call -> call != null && toolName.equals(call.toolName()));
     }
 
     private String effectiveTaskType() {
-        if (hasTool("recommend_songs")) {
+        if (hasRecommendationTool()) {
             return "recommend";
         }
         return safe(taskType).isBlank() ? "unknown" : safe(taskType);
@@ -114,6 +148,27 @@ record AgentTurnPlan(
             }
         }
         return "";
+    }
+
+    private List<AgentToolCall> nonBlankToolCalls() {
+        if (toolCalls == null) {
+            return List.of();
+        }
+        return toolCalls.stream()
+                .filter(call -> call != null && call.toolName() != null && !call.toolName().isBlank())
+                .toList();
+    }
+
+    private boolean isReadOnlyLoopTool(AgentToolCall call) {
+        return call != null && READ_ONLY_LOOP_TOOLS.contains(call.toolName());
+    }
+
+    private boolean isRecommendationTool(AgentToolCall call) {
+        return call != null && RECOMMENDATION_TOOLS.contains(call.toolName());
+    }
+
+    private boolean isLocalWriteTool(AgentToolCall call) {
+        return call != null && LOCAL_WRITE_TOOLS.contains(call.toolName());
     }
 
     private static String text(Map<String, Object> arguments, String key) {
@@ -195,16 +250,3 @@ record AgentTurnMemoryUse(
     }
 }
 
-record AgentTurnEvidence(
-        List<AgentToolExecution> executions,
-        List<Song> songs
-) {
-    static AgentTurnEvidence empty() {
-        return new AgentTurnEvidence(List.of(), List.of());
-    }
-
-    AgentTurnEvidence {
-        executions = executions == null ? List.of() : List.copyOf(executions);
-        songs = songs == null ? List.of() : List.copyOf(songs);
-    }
-}

@@ -132,7 +132,7 @@ class AgentToolPlannerTest {
         assertEquals(1, plan.toolCalls().size());
         assertEquals("search_songs", plan.toolCalls().getFirst().toolName());
         assertEquals("李荣浩 不遗憾", plan.toolCalls().getFirst().arguments().get("keyword"));
-        assertEquals(8, plan.toolCalls().getFirst().arguments().get("limit"));
+        assertEquals(5, plan.toolCalls().getFirst().arguments().get("limit"));
     }
 
     @Test

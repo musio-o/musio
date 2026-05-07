@@ -13,8 +13,20 @@ public record AgentTaskMemory(
         List<String> lastResultSongTitles,
         List<String> avoidSongTitles,
         List<AgentToolFailure> lastToolFailures,
+        Song lastTargetSong,
+        String lastCompletedTaskType,
+        List<String> lastObservationSummaries,
         Instant updatedAt
 ) {
+    public AgentTaskMemory {
+        lastResultSongs = lastResultSongs == null ? List.of() : List.copyOf(lastResultSongs);
+        lastResultSongTitles = lastResultSongTitles == null ? List.of() : List.copyOf(lastResultSongTitles);
+        avoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
+        lastToolFailures = lastToolFailures == null ? List.of() : List.copyOf(lastToolFailures);
+        lastCompletedTaskType = lastCompletedTaskType == null ? "" : lastCompletedTaskType.strip();
+        lastObservationSummaries = lastObservationSummaries == null ? List.of() : List.copyOf(lastObservationSummaries);
+    }
+
     public static AgentTaskMemory empty(String userId) {
         return new AgentTaskMemory(
                 userId,
@@ -25,6 +37,9 @@ public record AgentTaskMemory(
                 List.of(),
                 List.of(),
                 List.of(),
+                List.of(),
+                null,
+                "",
                 List.of(),
                 Instant.EPOCH
         );

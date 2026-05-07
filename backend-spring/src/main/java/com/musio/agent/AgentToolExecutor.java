@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Component
 public class AgentToolExecutor {
@@ -26,9 +27,14 @@ public class AgentToolExecutor {
         return executions;
     }
 
-    private java.util.Optional<AgentToolExecution> execute(AgentToolCall call) {
+    public Optional<String> executeTool(String toolName, Map<String, Object> arguments) {
+        return execute(new AgentToolCall(toolName, arguments))
+                .map(AgentToolExecution::resultJson);
+    }
+
+    private Optional<AgentToolExecution> execute(AgentToolCall call) {
         if (call == null || call.toolName() == null || call.toolName().isBlank()) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
         Map<String, Object> arguments = call.arguments() == null ? Map.of() : call.arguments();
         String result = switch (call.toolName()) {
@@ -42,9 +48,9 @@ public class AgentToolExecutor {
             default -> null;
         };
         if (result == null) {
-            return java.util.Optional.empty();
+            return Optional.empty();
         }
-        return java.util.Optional.of(new AgentToolExecution(call.toolName(), arguments, result));
+        return Optional.of(new AgentToolExecution(call.toolName(), arguments, result));
     }
 
     private String searchSongs(Map<String, Object> arguments) {

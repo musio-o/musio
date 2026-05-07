@@ -185,6 +185,9 @@ class AgentTurnPlannerTest {
                 List.of("简单爱", "告白气球"),
                 List.of(),
                 List.of(),
+                null,
+                "",
+                List.of(),
                 Instant.EPOCH
         );
 
@@ -278,4 +281,5 @@ class AgentTurnPlannerTest {
         assertTrue(plan.toolCalls().isEmpty());
         assertEquals("low_confidence", plan.fallbackReason());
     }
+
 }

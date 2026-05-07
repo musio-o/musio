@@ -215,6 +215,13 @@ public class AgentTaskContextResolver {
                     .reduce((left, right) -> left + "；" + right)
                     .orElse(""));
         }
+        if (memory.lastTargetSong() != null) {
+            appendLine(builder, "lastTargetSong", songRef(memory.lastTargetSong()));
+        }
+        appendLine(builder, "lastCompletedTaskType", memory.lastCompletedTaskType());
+        if (memory.lastObservationSummaries() != null && !memory.lastObservationSummaries().isEmpty()) {
+            appendLine(builder, "lastObservationSummaries", String.join("；", memory.lastObservationSummaries().stream().limit(5).toList()));
+        }
         if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
             appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
         } else if (memory.lastResultSongs() != null && !memory.lastResultSongs().isEmpty()) {
@@ -266,6 +273,9 @@ public class AgentTaskContextResolver {
                         .reduce((left, right) -> left + "；" + right)
                         .orElse(""));
             }
+            if (memory.lastTargetSong() != null) {
+                appendLine(builder, "lastTargetSong", songRef(memory.lastTargetSong()));
+            }
             if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
                 appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
             }
@@ -303,6 +313,9 @@ public class AgentTaskContextResolver {
                 && isBlank(memory.lastSearchKeyword())
                 && (memory.lastResultSongTitles() == null || memory.lastResultSongTitles().isEmpty())
                 && (memory.lastResultSongs() == null || memory.lastResultSongs().isEmpty())
+                && memory.lastTargetSong() == null
+                && isBlank(memory.lastCompletedTaskType())
+                && (memory.lastObservationSummaries() == null || memory.lastObservationSummaries().isEmpty())
                 && (memory.lastToolFailures() == null || memory.lastToolFailures().isEmpty());
     }
 
