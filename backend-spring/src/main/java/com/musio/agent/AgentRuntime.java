@@ -137,7 +137,7 @@ public class AgentRuntime {
                         taskContext.preservePreviousSongContext()
                 );
             }
-            if (turnPlan.hasTool("add_song_to_musio_playlist")) {
+            if (turnPlan.hasOnlyLocalWriteTools()) {
                 handleMusioPlaylistAdd(runId, ai, userId, request.message(), history, taskMemory, turnPlan, traceEnabled);
                 return;
             }
@@ -166,6 +166,16 @@ public class AgentRuntime {
                             ? agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, taskContext, turnPlan)
                             : PreludeContext.empty();
                 }
+            }
+            if (turnPlan.hasLocalWriteTools()) {
+                LocalPlaylistAddResult playlistAddResult = executeMusioPlaylistAdd(
+                        runId,
+                        history,
+                        taskMemory,
+                        turnPlan,
+                        preludeContext.songs()
+                );
+                preludeContext = withPlaylistAddResult(preludeContext, playlistAddResult);
             }
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
             Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext);
@@ -240,34 +250,7 @@ public class AgentRuntime {
             AgentTurnPlan turnPlan,
             boolean traceEnabled
     ) {
-        AgentToolCall call = firstToolCall(turnPlan, "add_song_to_musio_playlist");
-        Map<String, Object> arguments = call == null || call.arguments() == null ? Map.of() : call.arguments();
-        String playlistId = text(arguments, "playlistId").isBlank() ? "default" : text(arguments, "playlistId");
-        Map<String, Object> input = musioPlaylistAddInput(playlistId, arguments);
-        publishToolStart(runId, "add_song_to_musio_playlist", input);
-        tracePublisher.publishToolRunning(runId, "add_song_to_musio_playlist", input);
-
-        LocalPlaylistAddResult result;
-        try {
-            Song song = resolveMusioPlaylistSong(arguments, history, taskMemory);
-            if (song == null) {
-                result = LocalPlaylistAddResult.failure("还没能确定要收藏哪一首歌。你可以告诉我歌名，或先让我推荐/搜索出歌曲卡片。");
-            } else {
-                boolean existed = playlistContains(playlistId, song.id());
-                MusioPlaylist playlist = musioPlaylistService.addSong(playlistId, song);
-                result = LocalPlaylistAddResult.success(song, playlist, existed);
-            }
-        } catch (Exception e) {
-            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
-            result = LocalPlaylistAddResult.failure("收藏失败：" + message);
-        }
-
-        publishToolResult(runId, "add_song_to_musio_playlist", result.toolResult());
-        if (result.success()) {
-            tracePublisher.publishToolDone(runId, "add_song_to_musio_playlist", result.toolResult());
-        } else {
-            tracePublisher.publishToolError(runId, "add_song_to_musio_playlist", result.message());
-        }
+        LocalPlaylistAddResult result = executeMusioPlaylistAdd(runId, history, taskMemory, turnPlan, List.of());
 
         boolean[] composeStarted = {false};
         if (result.success()) {
@@ -289,16 +272,56 @@ public class AgentRuntime {
         eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
     }
 
+    private LocalPlaylistAddResult executeMusioPlaylistAdd(
+            String runId,
+            List<ConversationHistoryMessage> history,
+            AgentTaskMemory taskMemory,
+            AgentTurnPlan turnPlan,
+            List<Song> currentSongs
+    ) {
+        AgentToolCall call = firstToolCall(turnPlan, "add_song_to_musio_playlist");
+        Map<String, Object> arguments = call == null || call.arguments() == null ? Map.of() : call.arguments();
+        String playlistId = text(arguments, "playlistId").isBlank() ? "default" : text(arguments, "playlistId");
+        Map<String, Object> input = musioPlaylistAddInput(playlistId, arguments);
+        publishToolStart(runId, "add_song_to_musio_playlist", input);
+        tracePublisher.publishToolRunning(runId, "add_song_to_musio_playlist", input);
+
+        LocalPlaylistAddResult result;
+        try {
+            Song song = resolveMusioPlaylistSong(arguments, history, taskMemory, currentSongs);
+            if (song == null) {
+                result = LocalPlaylistAddResult.failure("还没能确定要收藏哪一首歌。你可以告诉我歌名，或先让我推荐/搜索出歌曲卡片。");
+            } else {
+                boolean existed = playlistContains(playlistId, song.id());
+                MusioPlaylist playlist = musioPlaylistService.addSong(playlistId, song);
+                result = LocalPlaylistAddResult.success(song, playlist, existed);
+            }
+        } catch (Exception e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            result = LocalPlaylistAddResult.failure("收藏失败：" + message);
+        }
+
+        publishToolResult(runId, "add_song_to_musio_playlist", result.toolResult());
+        if (result.success()) {
+            tracePublisher.publishToolDone(runId, "add_song_to_musio_playlist", result.toolResult());
+        } else {
+            tracePublisher.publishToolError(runId, "add_song_to_musio_playlist", result.message());
+        }
+
+        return result;
+    }
+
     private Song resolveMusioPlaylistSong(
             Map<String, Object> arguments,
             List<ConversationHistoryMessage> history,
-            AgentTaskMemory taskMemory
+            AgentTaskMemory taskMemory,
+            List<Song> currentSongs
     ) {
         String songId = text(arguments, "songId");
         String songTitle = text(arguments, "songTitle");
         String artist = text(arguments, "artist");
         Integer songIndex = integer(arguments, "songIndex");
-        List<Song> candidates = recentSongs(history, taskMemory);
+        List<Song> candidates = recentSongs(history, taskMemory, currentSongs);
         Song fromContext = resolveFromCandidates(candidates, songId, songTitle, artist, songIndex);
         if (fromContext != null) {
             return fromContext;
@@ -354,8 +377,13 @@ public class AgentRuntime {
         return candidates.getFirst();
     }
 
-    private List<Song> recentSongs(List<ConversationHistoryMessage> history, AgentTaskMemory taskMemory) {
+    private List<Song> recentSongs(List<ConversationHistoryMessage> history, AgentTaskMemory taskMemory, List<Song> currentSongs) {
         Map<String, Song> songsById = new LinkedHashMap<>();
+        if (currentSongs != null) {
+            for (Song song : currentSongs) {
+                addSongCandidate(songsById, song);
+            }
+        }
         if (history != null) {
             for (int index = history.size() - 1; index >= 0; index--) {
                 ConversationHistoryMessage message = history.get(index);
@@ -404,12 +432,7 @@ public class AgentRuntime {
         if (turnPlan == null || turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty()) {
             return List.of();
         }
-        return turnPlan.toolCalls().stream()
-                .filter(call -> call != null
-                        && call.toolName() != null
-                        && !call.toolName().isBlank()
-                        && !"recommend_songs".equals(call.toolName())
-                        && !"add_song_to_musio_playlist".equals(call.toolName()))
+        return turnPlan.readOnlyLoopToolCalls().stream()
                 .limit(1)
                 .map(call -> new AgentStepAction(
                         AgentStepActionType.TOOL_CALL,
@@ -544,7 +567,7 @@ public class AgentRuntime {
             return false;
         }
         // Planner 的显式工具计划优先；legacy recommendation 不能覆盖已声明的 search_songs 等工具调用。
-        return turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty() || turnPlan.hasTool("recommend_songs");
+        return turnPlan.toolCalls() == null || turnPlan.toolCalls().isEmpty() || turnPlan.hasRecommendationTool();
     }
 
     private PreludeContext agentLoopPreludeContext(
@@ -611,6 +634,51 @@ public class AgentRuntime {
                 true,
                 evidence.songs(),
                 "");
+    }
+
+    private PreludeContext withPlaylistAddResult(PreludeContext context, LocalPlaylistAddResult result) {
+        PreludeContext base = context == null ? PreludeContext.empty() : context;
+        if (result == null) {
+            return base;
+        }
+        List<Song> songs = result.success()
+                ? mergeSongs(base.songs(), List.of(result.song()))
+                : base.songs();
+        String text = (base.text() + "\n\n" + playlistAddContext(result)).strip();
+        return new PreludeContext(text, true, songs, base.answerPrefix());
+    }
+
+    private String playlistAddContext(LocalPlaylistAddResult result) {
+        Map<String, Object> toolResult = result.toolResult();
+        return """
+
+                本轮还执行了 Musio 本地歌单写入：
+                工具：add_song_to_musio_playlist
+                状态：%s
+                摘要：%s
+                结果 JSON：%s
+
+                最终回答必须同时完成用户这轮请求中的所有部分：如果上方只读音乐 evidence 里有评论、歌词、详情或搜索结果，先基于它们回答；同时明确说明 Musio 歌单收藏结果。不要只回复歌单收藏结果。
+                """.formatted(
+                result.success() ? "SUCCESS" : "FAILURE",
+                String.valueOf(toolResult.getOrDefault("summary", result.answerText())),
+                writeJson(toolResult)
+        ).strip();
+    }
+
+    private List<Song> mergeSongs(List<Song> primary, List<Song> extra) {
+        Map<String, Song> songsById = new LinkedHashMap<>();
+        if (primary != null) {
+            for (Song song : primary) {
+                addSongCandidate(songsById, song);
+            }
+        }
+        if (extra != null) {
+            for (Song song : extra) {
+                addSongCandidate(songsById, song);
+            }
+        }
+        return List.copyOf(songsById.values());
     }
 
     private void publishAnswerDelta(String runId, MusioConfig.Ai ai, AgentAnswerStreamGuard answerGuard, String chunk, boolean traceEnabled, boolean[] composeStarted) {
