@@ -293,25 +293,43 @@ function MagneticDotField() {
       return;
     }
     const drawingContext = context;
+    const staticCanvas = document.createElement("canvas");
+    const staticContext = staticCanvas.getContext("2d");
+    if (!staticContext) {
+      return;
+    }
+    const staticDrawingContext = staticContext;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let canvasRect = canvasElement.getBoundingClientRect();
+    let fieldWidth = Math.round(canvasRect.width);
+    let fieldHeight = Math.round(canvasRect.height);
 
     function resizeAndBuildDots() {
-      const { width, height } = canvasElement.getBoundingClientRect();
+      const bounds = canvasElement.getBoundingClientRect();
+      const { width, height } = bounds;
       if (width <= 0 || height <= 0) {
         return;
       }
       const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
       const canvasWidth = Math.round(width);
       const canvasHeight = Math.round(height);
-      canvasElement.width = Math.max(1, Math.round(canvasWidth * pixelRatio));
-      canvasElement.height = Math.max(1, Math.round(canvasHeight * pixelRatio));
-      drawingContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      const signature = `${canvasWidth}:${canvasHeight}:${pixelRatio}`;
 
-      const signature = `${canvasWidth}:${canvasHeight}`;
+      canvasRect = bounds;
+      fieldWidth = canvasWidth;
+      fieldHeight = canvasHeight;
+
       if (gridSignatureRef.current === signature) {
         drawDots();
         return;
       }
+
+      canvasElement.width = Math.max(1, Math.round(canvasWidth * pixelRatio));
+      canvasElement.height = Math.max(1, Math.round(canvasHeight * pixelRatio));
+      staticCanvas.width = canvasElement.width;
+      staticCanvas.height = canvasElement.height;
+      drawingContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      staticDrawingContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
 
       gridSignatureRef.current = signature;
       const nextDots: MagneticDot[] = [];
@@ -345,29 +363,55 @@ function MagneticDotField() {
       });
 
       dotsDataRef.current = nextDots;
+      drawStaticDots();
       drawDots();
+    }
+
+    function drawStaticDots() {
+      staticDrawingContext.clearRect(0, 0, fieldWidth, fieldHeight);
+      dotsDataRef.current.forEach((dot) => {
+        staticDrawingContext.beginPath();
+        staticDrawingContext.fillStyle = dotFillStyle(dot.tone, dot.baseOpacity);
+        staticDrawingContext.arc(dot.x, dot.y, dot.size, 0, Math.PI * 2);
+        staticDrawingContext.fill();
+      });
     }
 
     function drawDots() {
       frameRef.current = null;
-
-      const fieldWidth = canvasElement.clientWidth;
-      const fieldHeight = canvasElement.clientHeight;
+      if (fieldWidth <= 0 || fieldHeight <= 0) {
+        return;
+      }
       const pointer = pointerRef.current;
       const data = dotsDataRef.current;
       const radius = clampNumber(Math.min(fieldWidth, fieldHeight) * 0.2, 110, 210);
       const maxPull = clampNumber(Math.min(fieldWidth, fieldHeight) * 0.022, 8, 18);
+      const radiusSquared = radius * radius;
 
       drawingContext.clearRect(0, 0, fieldWidth, fieldHeight);
+      drawingContext.drawImage(staticCanvas, 0, 0, fieldWidth, fieldHeight);
+      if (reducedMotion || !pointer.active) {
+        return;
+      }
 
       data.forEach((dot) => {
         const baseX = dot.x;
         const baseY = dot.y;
         const deltaX = pointer.x - baseX;
         const deltaY = pointer.y - baseY;
-        const distance = Math.hypot(deltaX, deltaY);
-        const force = !reducedMotion && pointer.active ? Math.max(0, 1 - distance / radius) : 0;
+        if (Math.abs(deltaX) > radius || Math.abs(deltaY) > radius) {
+          return;
+        }
+        const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+        if (distanceSquared > radiusSquared) {
+          return;
+        }
+        const distance = Math.sqrt(distanceSquared);
+        const force = Math.max(0, 1 - distance / radius);
         const easedForce = force * force * (3 - 2 * force);
+        if (easedForce < 0.012) {
+          return;
+        }
         const safeDistance = distance || 1;
         const attraction = maxPull * easedForce * dot.pull;
         const x = baseX + (deltaX / safeDistance) * attraction;
@@ -394,9 +438,8 @@ function MagneticDotField() {
         return;
       }
 
-      const rect = canvasElement.getBoundingClientRect();
-      const x = event.clientX - rect.left;
-      const y = event.clientY - rect.top;
+      const x = event.clientX - canvasRect.left;
+      const y = event.clientY - canvasRect.top;
       pointerRef.current = { active: true, x, y };
 
       scheduleMagneticFrame();

@@ -4280,14 +4280,8 @@ canvas.magnetic-dot-field {
   user-select: none;
   opacity: 1;
   mix-blend-mode: normal;
-  mask-image:
-    linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent),
-    radial-gradient(ellipse 88% 82% at 50% 48%, #000 0%, rgba(0, 0, 0, 0.92) 60%, transparent 92%);
-  mask-composite: intersect;
-  -webkit-mask-image:
-    linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent),
-    radial-gradient(ellipse 88% 82% at 50% 48%, #000 0%, rgba(0, 0, 0, 0.92) 60%, transparent 92%);
-  -webkit-mask-composite: source-in;
+  mask-image: none;
+  -webkit-mask-image: none;
 }
 
 canvas.magnetic-dot-field::before {
@@ -4303,5 +4297,107 @@ canvas.magnetic-dot-field::before {
 @media (prefers-reduced-motion: reduce) {
   canvas.magnetic-dot-field {
     opacity: 0.72;
+  }
+}
+
+/* Taller portrait workbench */
+.workspace-workbench .workbench-stage {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.workspace-workbench .radio-workbench {
+  height: calc(100vh - 16px);
+  height: calc(100dvh - 16px);
+  max-height: none;
+  backdrop-filter: none;
+}
+
+.workspace-workbench .radio-header {
+  min-height: 54px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.workspace-workbench .player-now-row {
+  padding-top: 11px;
+  padding-bottom: 11px;
+}
+
+.workspace-workbench .spectrum-divider {
+  flex-basis: 56px;
+  padding-top: 6px;
+  padding-bottom: 7px;
+}
+
+.workspace-workbench .spectrum-divider .player-spectrum {
+  height: 30px;
+}
+
+.workspace-workbench .command-panel {
+  gap: 12px;
+  padding: 20px 24px 16px;
+}
+
+.workspace-workbench .command-panel .panel-heading {
+  min-height: 36px;
+}
+
+.workspace-workbench .chat-panel-title {
+  font-size: 30px;
+}
+
+.workspace-workbench .chat-message-list,
+.workspace-workbench .chat-message-list.empty {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.workspace-workbench .chat-message-list {
+  padding: 16px 12px 10px;
+}
+
+.workspace-workbench .radio-footer {
+  min-height: 32px;
+}
+
+@media (max-width: 1180px) {
+  .workspace-workbench .radio-workbench {
+    height: calc(100vh - 16px);
+    height: calc(100dvh - 16px);
+  }
+}
+
+@media (max-width: 980px) {
+  .workspace-workbench .workbench-stage {
+    padding: 54px 12px 10px;
+  }
+
+  .workspace-workbench .radio-workbench {
+    height: calc(100vh - 68px);
+    height: calc(100dvh - 68px);
+  }
+
+  .workspace-workbench .command-panel {
+    padding: 18px 16px 14px;
+  }
+}
+
+@media (max-width: 600px) {
+  .workspace-workbench .workbench-stage {
+    padding: 50px 8px 8px;
+  }
+
+  .workspace-workbench .radio-workbench {
+    height: calc(100vh - 58px);
+    height: calc(100dvh - 58px);
+  }
+
+  .workspace-workbench .radio-header {
+    min-height: 50px;
+  }
+
+  .workspace-workbench .command-panel {
+    padding: 14px 10px 10px;
   }
 }
