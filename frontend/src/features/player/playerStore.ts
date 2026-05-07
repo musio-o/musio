@@ -11,29 +11,42 @@ const PLAYBACK_RECOVERY_MAX_ATTEMPTS = 3;
 const PLAYBACK_PROGRESS_STALL_MS = 7000;
 const IDLE_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const QUIET_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
+const PLAYER_QUEUE_STORAGE_KEY = "musio.player.queue.v1";
+const PLAYER_QUEUE_STORAGE_VERSION = 1;
 
-const initialPlayerState: PlayerState = {
-  currentSong: null,
-  queue: [],
-  currentIndex: -1,
-  paused: true,
-  positionSeconds: 0,
-  durationSeconds: null,
-  playbackMode: "SEQUENTIAL",
-  lyricLine: "[NO TRACK]",
-  lyricsText: "",
-  lyricLines: [],
-  activeLyricIndex: -1,
-  spectrumLevels: IDLE_SPECTRUM_LEVELS
+type StoredPlayerQueueState = {
+  version: typeof PLAYER_QUEUE_STORAGE_VERSION;
+  queue: Song[];
+  currentIndex: number;
+  playbackMode: PlaybackMode;
 };
+
+const initialPlayerState: PlayerState = createIdlePlayerState();
+
+function createIdlePlayerState(): PlayerState {
+  return {
+    currentSong: null,
+    queue: [],
+    currentIndex: -1,
+    paused: true,
+    positionSeconds: 0,
+    durationSeconds: null,
+    playbackMode: "SEQUENTIAL",
+    lyricLine: "[NO TRACK]",
+    lyricsText: "",
+    lyricLines: [],
+    activeLyricIndex: -1,
+    spectrumLevels: IDLE_SPECTRUM_LEVELS
+  };
+}
 
 type WebAudioWindow = Window & typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
 };
 
 export function usePlayerStore() {
-  const [state, setState] = useState<PlayerState>(initialPlayerState);
-  const stateRef = useRef<PlayerState>(initialPlayerState);
+  const [state, setState] = useState<PlayerState>(() => restorePlayerState());
+  const stateRef = useRef<PlayerState>(state);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playRequestRef = useRef(0);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -53,6 +66,10 @@ export function usePlayerStore() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  useEffect(() => {
+    persistPlayerQueueState(state);
+  }, [state.currentIndex, state.currentSong?.id, state.playbackMode, state.queue]);
 
   useEffect(() => {
     const audio = new Audio();
@@ -593,6 +610,11 @@ export function usePlayerStore() {
         userPausedRef.current = false;
         recoveryAttemptsRef.current = 0;
         clearPlaybackRecoveryTimeout();
+        if (!audio.src && state.currentSong) {
+          const index = state.currentIndex >= 0 ? state.currentIndex : 0;
+          void startPlayback(state.currentSong, state.queue, index);
+          return;
+        }
         audio.play()
           .then(() => {
             setState((current) => ({ ...current, paused: false }));
@@ -619,6 +641,91 @@ export function usePlayerStore() {
       });
     }
   };
+}
+
+function restorePlayerState(): PlayerState {
+  const fallback = createIdlePlayerState();
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(PLAYER_QUEUE_STORAGE_KEY);
+    if (!rawValue) {
+      return fallback;
+    }
+
+    const storedValue = JSON.parse(rawValue) as Partial<StoredPlayerQueueState>;
+    if (storedValue.version !== PLAYER_QUEUE_STORAGE_VERSION || !Array.isArray(storedValue.queue)) {
+      window.localStorage.removeItem(PLAYER_QUEUE_STORAGE_KEY);
+      return fallback;
+    }
+
+    const queue = storedValue.queue.map(normalizeStoredSong).filter((song): song is Song => song !== null);
+    const currentIndex = isValidQueueIndex(storedValue.currentIndex, queue) ? storedValue.currentIndex : -1;
+    const currentSong = currentIndex >= 0 ? queue[currentIndex] : null;
+
+    return {
+      ...fallback,
+      currentSong,
+      queue,
+      currentIndex,
+      durationSeconds: currentSong?.durationSeconds ?? null,
+      playbackMode: isPlaybackMode(storedValue.playbackMode) ? storedValue.playbackMode : fallback.playbackMode,
+      lyricLine: currentSong ? "[PAUSED]" : fallback.lyricLine
+    };
+  } catch {
+    window.localStorage.removeItem(PLAYER_QUEUE_STORAGE_KEY);
+    return fallback;
+  }
+}
+
+function persistPlayerQueueState(state: PlayerState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const snapshot: StoredPlayerQueueState = {
+    version: PLAYER_QUEUE_STORAGE_VERSION,
+    queue: state.queue,
+    currentIndex: isValidQueueIndex(state.currentIndex, state.queue) ? state.currentIndex : -1,
+    playbackMode: state.playbackMode
+  };
+
+  try {
+    window.localStorage.setItem(PLAYER_QUEUE_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // localStorage can be full or blocked by browser settings. Playback should keep working in memory.
+  }
+}
+
+function normalizeStoredSong(value: unknown): Song | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const song = value as Partial<Song>;
+  if (typeof song.id !== "string" || song.id.trim() === "" || typeof song.title !== "string") {
+    return null;
+  }
+
+  return {
+    id: song.id,
+    provider: typeof song.provider === "string" ? song.provider : undefined,
+    title: song.title,
+    artists: Array.isArray(song.artists) ? song.artists.filter((artist): artist is string => typeof artist === "string") : [],
+    album: typeof song.album === "string" || song.album === null ? song.album : undefined,
+    durationSeconds: typeof song.durationSeconds === "number" && Number.isFinite(song.durationSeconds) ? song.durationSeconds : null,
+    artworkUrl: typeof song.artworkUrl === "string" || song.artworkUrl === null ? song.artworkUrl : undefined
+  };
+}
+
+function isValidQueueIndex(index: unknown, queue: Song[]): index is number {
+  return typeof index === "number" && Number.isInteger(index) && index >= 0 && index < queue.length;
+}
+
+function isPlaybackMode(value: unknown): value is PlaybackMode {
+  return typeof value === "string" && PLAYBACK_MODES.includes(value as PlaybackMode);
 }
 
 function nextQueueIndex(state: PlayerState) {
