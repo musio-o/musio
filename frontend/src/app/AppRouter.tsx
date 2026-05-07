@@ -182,6 +182,7 @@ export function AppRouter() {
           <MusioPlaylistsPage />
         ) : (
           <section className="workbench-stage">
+            <MagneticDotField />
             <TimeBackdrop now={now} />
             <section className={`radio-workbench ${drawerOpen ? "drawer-open" : ""}`}>
               <header className="radio-header">
@@ -260,6 +261,184 @@ export function AppRouter() {
 }
 
 type WorkbenchDrawer = "search" | "queue" | "lyrics" | "comments" | "trace";
+
+type MagneticDotTone = "neutral" | "accent" | "cold";
+
+type MagneticDot = {
+  x: number;
+  y: number;
+  size: number;
+  baseOpacity: number;
+  pull: number;
+  tone: MagneticDotTone;
+};
+
+function MagneticDotField() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const dotsDataRef = useRef<MagneticDot[]>([]);
+  const frameRef = useRef<number | null>(null);
+  const gridSignatureRef = useRef("");
+  const pointerRef = useRef({ active: false, x: 0, y: 0 });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const stage = canvas?.parentElement;
+    if (!canvas || !stage) {
+      return;
+    }
+    const canvasElement = canvas;
+    const stageElement = stage;
+    const context = canvasElement.getContext("2d");
+    if (!context) {
+      return;
+    }
+    const drawingContext = context;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    function resizeAndBuildDots() {
+      const { width, height } = canvasElement.getBoundingClientRect();
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      const canvasWidth = Math.round(width);
+      const canvasHeight = Math.round(height);
+      canvasElement.width = Math.max(1, Math.round(canvasWidth * pixelRatio));
+      canvasElement.height = Math.max(1, Math.round(canvasHeight * pixelRatio));
+      drawingContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+      const signature = `${canvasWidth}:${canvasHeight}`;
+      if (gridSignatureRef.current === signature) {
+        drawDots();
+        return;
+      }
+
+      gridSignatureRef.current = signature;
+      const nextDots: MagneticDot[] = [];
+      const dotLayers: Array<{
+        spacing: number;
+        offsetX: number;
+        offsetY: number;
+        size: number;
+        baseOpacity: number;
+        pull: number;
+        tone: MagneticDotTone;
+      }> = [
+        { spacing: 18, offsetX: 0, offsetY: 0, size: 0.9, baseOpacity: 0.18, pull: 0.22, tone: "neutral" },
+        { spacing: 36, offsetX: 9, offsetY: 11, size: 0.85, baseOpacity: 0.13, pull: 0.28, tone: "accent" },
+        { spacing: 72, offsetX: 18, offsetY: 6, size: 0.76, baseOpacity: 0.1, pull: 0.18, tone: "cold" }
+      ];
+
+      dotLayers.forEach((layer) => {
+        for (let y = layer.offsetY; y <= canvasHeight + layer.spacing; y += layer.spacing) {
+          for (let x = layer.offsetX; x <= canvasWidth + layer.spacing; x += layer.spacing) {
+            nextDots.push({
+              x,
+              y,
+              size: layer.size,
+              baseOpacity: layer.baseOpacity,
+              pull: layer.pull,
+              tone: layer.tone
+            });
+          }
+        }
+      });
+
+      dotsDataRef.current = nextDots;
+      drawDots();
+    }
+
+    function drawDots() {
+      frameRef.current = null;
+
+      const fieldWidth = canvasElement.clientWidth;
+      const fieldHeight = canvasElement.clientHeight;
+      const pointer = pointerRef.current;
+      const data = dotsDataRef.current;
+      const radius = clampNumber(Math.min(fieldWidth, fieldHeight) * 0.2, 110, 210);
+      const maxPull = clampNumber(Math.min(fieldWidth, fieldHeight) * 0.022, 8, 18);
+
+      drawingContext.clearRect(0, 0, fieldWidth, fieldHeight);
+
+      data.forEach((dot) => {
+        const baseX = dot.x;
+        const baseY = dot.y;
+        const deltaX = pointer.x - baseX;
+        const deltaY = pointer.y - baseY;
+        const distance = Math.hypot(deltaX, deltaY);
+        const force = !reducedMotion && pointer.active ? Math.max(0, 1 - distance / radius) : 0;
+        const easedForce = force * force * (3 - 2 * force);
+        const safeDistance = distance || 1;
+        const attraction = maxPull * easedForce * dot.pull;
+        const x = baseX + (deltaX / safeDistance) * attraction;
+        const y = baseY + (deltaY / safeDistance) * attraction;
+        const opacity = Math.min(0.42, dot.baseOpacity + easedForce * 0.16);
+        const size = dot.size * (1 + easedForce * 0.32);
+
+        drawingContext.beginPath();
+        drawingContext.fillStyle = dotFillStyle(dot.tone, opacity);
+        drawingContext.arc(x, y, size, 0, Math.PI * 2);
+        drawingContext.fill();
+      });
+    }
+
+    function scheduleMagneticFrame() {
+      if (frameRef.current !== null) {
+        return;
+      }
+      frameRef.current = window.requestAnimationFrame(drawDots);
+    }
+
+    function handlePointerMove(event: PointerEvent) {
+      if (event.pointerType === "touch") {
+        return;
+      }
+
+      const rect = canvasElement.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      pointerRef.current = { active: true, x, y };
+
+      scheduleMagneticFrame();
+    }
+
+    function handlePointerLeave() {
+      pointerRef.current = { ...pointerRef.current, active: false };
+
+      scheduleMagneticFrame();
+    }
+
+    resizeAndBuildDots();
+    const observer = new ResizeObserver(resizeAndBuildDots);
+    observer.observe(canvasElement);
+    stageElement.addEventListener("pointermove", handlePointerMove);
+    stageElement.addEventListener("pointerleave", handlePointerLeave);
+
+    return () => {
+      observer.disconnect();
+      stageElement.removeEventListener("pointermove", handlePointerMove);
+      stageElement.removeEventListener("pointerleave", handlePointerLeave);
+      if (frameRef.current !== null) {
+        window.cancelAnimationFrame(frameRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <canvas className="magnetic-dot-field" ref={canvasRef} aria-hidden="true" />
+  );
+}
+
+function dotFillStyle(tone: MagneticDotTone, opacity: number) {
+  switch (tone) {
+    case "accent":
+      return `rgba(125, 245, 184, ${opacity})`;
+    case "cold":
+      return `rgba(192, 213, 226, ${opacity * 0.92})`;
+    default:
+      return `rgba(232, 238, 235, ${opacity})`;
+  }
+}
 
 function TimeBackdrop({ now }: { now: Date }) {
   const [hour, minute] = formatClockParts(now);
@@ -735,6 +914,10 @@ function formatCommentDate(value?: string | null) {
     month: "short",
     day: "2-digit"
   }).format(date).toUpperCase();
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function sourceKey(source: string) {
