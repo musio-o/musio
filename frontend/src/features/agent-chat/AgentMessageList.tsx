@@ -117,8 +117,9 @@ function InlineSongCards({
 
   return (
     <div className="chat-song-card-list" aria-label="Musio 推荐歌曲">
-      {songs.map((song) => (
+      {songs.map((song, index) => (
         <article key={song.id} className="chat-song-card">
+          <span className="chat-song-index">{index + 1}</span>
           <div className="chat-song-cover">
             {song.artworkUrl ? <img src={song.artworkUrl} alt="" /> : <span>{song.title?.slice(0, 1) || "M"}</span>}
           </div>

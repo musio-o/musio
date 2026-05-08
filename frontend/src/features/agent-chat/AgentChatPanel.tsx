@@ -1,6 +1,7 @@
 import { FormEvent, KeyboardEvent } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import { ArrowUp } from "lucide-react";
+import { Code2, Coffee, Leaf, Music2, SendHorizontal, Shuffle } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { EventLog, Song } from "../../shared/types";
 import { AgentMessageList } from "./AgentMessageList";
 import { chatClient } from "./chatClient";
@@ -19,6 +20,14 @@ type AgentChatPanelProps = {
   onAddToQueue: (song: Song) => void;
   onFavoriteSong: (song: Song) => void;
 };
+
+const quickPrompts: Array<{ label: string; prompt: string; Icon: LucideIcon }> = [
+  { label: "提升专注力的音乐", prompt: "给我推荐 5 首适合提升专注力的音乐。", Icon: Music2 },
+  { label: "深夜学习 / 写代码", prompt: "给我推荐 5 首适合深夜学习和写代码听的歌。", Icon: Code2 },
+  { label: "咖啡馆氛围 BGM", prompt: "给我推荐 5 首像咖啡馆背景音乐一样松弛的歌。", Icon: Coffee },
+  { label: "Chill 轻松的旋律", prompt: "给我推荐 5 首轻松但不分心的 Chill 旋律。", Icon: Leaf },
+  { label: "换一批", prompt: "换一批更冷静、更低干扰的推荐。", Icon: Shuffle }
+];
 
 export function AgentChatPanel({
   busy,
@@ -153,10 +162,6 @@ export function AgentChatPanel({
 
   return (
     <section className="panel command-panel">
-      <div className="panel-heading">
-        <h2 className="chat-panel-title">MUSIO</h2>
-        <span>{busy ? "运行中" : "空闲"}</span>
-      </div>
       {disabledReason ? <p className="access-note">{disabledReason}</p> : null}
       <AgentMessageList
         messages={messages}
@@ -166,15 +171,28 @@ export function AgentChatPanel({
       />
       <form onSubmit={startChat} className="prompt-form">
         <textarea
-          placeholder="Say something to Musio..."
+          placeholder="告诉 MUSIO 你想听什么，越具体越好..."
           value={message}
           onChange={(event) => onMessageChange(event.target.value)}
           onKeyDown={handleTextareaKeyDown}
         />
         <button type="submit" disabled={busy || !message.trim()}>
-          <ArrowUp size={18} />
+          <SendHorizontal size={18} />
         </button>
       </form>
+      <div className="quick-prompt-row" aria-label="快捷推荐场景">
+        {quickPrompts.map(({ label, prompt, Icon }) => (
+          <button
+            key={label}
+            type="button"
+            disabled={busy}
+            onClick={() => onMessageChange(prompt)}
+          >
+            <Icon size={15} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </div>
     </section>
   );
 }

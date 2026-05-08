@@ -123,7 +123,7 @@ export function AppRouter() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${route === "workbench" ? "app-shell-workbench" : ""}`}>
       <aside className="rail">
         <div className="brand-mark">
           <span>M</span>
@@ -194,6 +194,9 @@ export function AppRouter() {
                   </div>
                 </div>
                 <div className="radio-header-actions">
+                  <span className={`radio-state ${player.state.currentSong && !player.state.paused ? "online" : ""}`}>
+                    {player.state.currentSong && !player.state.paused ? "正在播放" : "待播放"}
+                  </span>
                   {sourceStatusPills.map((item) => (
                     <span className={`radio-state ${item.healthy ? "online" : ""}`} key={item.key}>{item.label}</span>
                   ))}
