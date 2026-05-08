@@ -845,10 +845,16 @@ public class AgentRuntime {
         if (turnPlan == null || !turnPlan.hasLocalWriteTools() || turnPlan.hasOnlyLocalWriteTools()) {
             return false;
         }
-        if (preludeContext == null || preludeContext.directAnswer()) {
+        if (preludeContext == null || preludeContext.directAnswer() || preludeHasPendingLocalPlaylistAdd(preludeContext)) {
             return false;
         }
         return !preludeHasLocalPlaylistWrite(preludeContext);
+    }
+
+    private boolean preludeHasPendingLocalPlaylistAdd(PreludeContext preludeContext) {
+        return preludeContext != null
+                && preludeContext.text() != null
+                && preludeContext.text().contains("PENDING_CONFIRMATION");
     }
 
     private boolean preludeHasLocalPlaylistWrite(PreludeContext preludeContext) {
@@ -971,7 +977,6 @@ public class AgentRuntime {
                 pendingPlan,
                 songs
         );
-        String directAnswer = fastPathAnswer(song, commentsResultJson, pending);
         log.info(
                 "TURN_EXECUTOR stage={} runId={} userId={} searchStatus=SUCCESS commentStatus={} pendingPlaylistAdd={} songCardCount={} songCardTitles={}",
                 stageName,
@@ -1007,6 +1012,7 @@ public class AgentRuntime {
                 最终回答只能推荐这一首歌，不能扩展成 5 首或更多。
                 如果评论工具成功，只总结最热门的 1 条评论。
                 最终回答必须明确说明：尚未加入本地 Musio 歌单，需要用户回复“确认收藏”后才会写入。
+                最终回答要沿用 Musio 的温暖朋友式语气，给出一句具体、有人情味的推荐理由，但不要编造工具结果之外的事实。
                 工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出任何工具调用协议文本。
                 """.formatted(
                 writeJson(searchArguments),
@@ -1016,35 +1022,7 @@ public class AgentRuntime {
                 successStatus(commentsResultJson),
                 commentsResultJson,
                 songTitle(song)
-        ), true, songs, directAnswer, true);
-    }
-
-    private String fastPathAnswer(Song song, String commentsResultJson, PendingLocalPlaylistAdd pending) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("我给你推荐这首：**")
-                .append(songTitle(song))
-                .append("**。");
-        String comment = firstCommentText(commentsResultJson);
-        if (!comment.isBlank()) {
-            builder.append("\n\n最热门的评论是：")
-                    .append(comment);
-        }
-        builder.append("\n\n")
-                .append(pendingConfirmationText(pending));
-        return builder.toString();
-    }
-
-    private String firstCommentText(String commentsResultJson) {
-        try {
-            JsonNode comments = objectMapper.readTree(commentsResultJson == null ? "{}" : commentsResultJson).path("comments");
-            if (comments.isArray() && !comments.isEmpty()) {
-                String text = comments.get(0).path("text").asText("");
-                return text == null ? "" : text.strip();
-            }
-        } catch (Exception ignored) {
-            return "";
-        }
-        return "";
+        ), true, songs, "");
     }
 
     private String fastPathSearchKeyword(String userMessage, AgentTaskContext taskContext, AgentTurnPlan turnPlan) {
