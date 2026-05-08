@@ -6530,3 +6530,53 @@ canvas.magnetic-dot-field::before {
     max-width: min(84%, calc(100% - 44px));
   }
 }
+
+/* Nothing-inspired player artwork: compact hardware tile only. */
+.workspace-workbench .player-art {
+  position: relative;
+  isolation: isolate;
+  border: 1px solid rgba(232, 232, 232, 0.2);
+  border-radius: 8px;
+  background: rgba(3, 3, 3, 0.88);
+  color: rgba(232, 232, 232, 0.72);
+  box-shadow: none;
+}
+
+.workspace-workbench .player-art::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  z-index: 3;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(232, 232, 232, 0.48);
+  pointer-events: none;
+}
+
+.workspace-workbench .player-art::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  z-index: 2;
+  border: 1px solid rgba(232, 232, 232, 0.08);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.workspace-workbench .player-art img {
+  position: relative;
+  z-index: 1;
+  filter: grayscale(0.35) contrast(1.08) brightness(0.9);
+}
+
+.workspace-workbench .player-art span {
+  position: relative;
+  z-index: 1;
+  color: rgba(232, 232, 232, 0.72);
+  font-family: var(--font-display);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
