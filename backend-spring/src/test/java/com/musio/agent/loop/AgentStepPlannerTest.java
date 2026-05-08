@@ -1,6 +1,7 @@
 package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,6 +26,23 @@ class AgentStepPlannerTest {
         assertEquals(AgentStepActionType.TOOL_CALL, action.action());
         assertEquals("search_songs", action.toolName());
         assertEquals("周杰伦", action.arguments().get("keyword"));
+        assertEquals(1, action.arguments().get("limit"));
+    }
+
+    @Test
+    void clampsSearchLimitToRequestedSongCount() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "search_songs",
+                  "arguments": {"keyword": "李荣浩", "limit": 5},
+                  "publicActivity": "搜索李荣浩",
+                  "confidence": 0.91,
+                  "reason": "用户只要求一首"
+                }
+                """, new AgentCapabilityRegistry().readManifest(), 1).orElseThrow();
+
+        assertEquals("search_songs", action.toolName());
         assertEquals(1, action.arguments().get("limit"));
     }
 
@@ -72,6 +90,36 @@ class AgentStepPlannerTest {
                   "toolName": "delete_file",
                   "arguments": {"path": "/tmp/x"},
                   "confidence": 0.9
+                }
+                """).isEmpty());
+    }
+
+    @Test
+    void parsesLocalPlaylistWriteWhenManifestAllowsIt() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "add_song_to_musio_playlist",
+                  "arguments": {"playlistId": "default", "songIndex": 1},
+                  "publicActivity": "收藏第一首歌",
+                  "confidence": 0.92,
+                  "reason": "用户明确要求收藏"
+                }
+                """, new AgentCapabilityRegistry().manifest(true)).orElseThrow();
+
+        assertEquals(AgentStepActionType.TOOL_CALL, action.action());
+        assertEquals("add_song_to_musio_playlist", action.toolName());
+        assertEquals(1, action.arguments().get("songIndex"));
+    }
+
+    @Test
+    void dropsLocalPlaylistWriteWhenManifestDoesNotAllowIt() {
+        assertTrue(planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "add_song_to_musio_playlist",
+                  "arguments": {"songIndex": 1},
+                  "confidence": 0.92
                 }
                 """).isEmpty());
     }

@@ -2,6 +2,8 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentToolExecutor;
+import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.events.AgentEventBus;
@@ -28,6 +30,10 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class AgentLoopRunnerTest {
     @Test
@@ -258,6 +264,7 @@ class AgentLoopRunnerTest {
                 targetSong,
                 "comments",
                 List.of("get_hot_comments 成功，评论 1 条"),
+                null,
                 Instant.EPOCH
         );
         AgentLoopRunner runner = new AgentLoopRunner(
@@ -341,6 +348,100 @@ class AgentLoopRunnerTest {
         assertTrue(evidence.observations().getFirst().resultJson().contains("\"comments\":[]"));
     }
 
+    @Test
+    void rejectsLocalPlaylistWriteWhenManifestDoesNotAllowIt() {
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "add_song_to_musio_playlist", Map.of("songIndex", 1), "收藏第一首歌", 0.9, "用户要求收藏"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "收藏第一首歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0
+        ));
+
+        assertEquals(1, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().getFirst().status());
+        assertTrue(evidence.observations().getFirst().resultJson().contains("unknown_tool"));
+    }
+
+    @Test
+    void recognizesLocalPlaylistWriteAsPlaylistTaskWhenManifestAllowsIt() {
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "add_song_to_musio_playlist", Map.of("songIndex", 1), "收藏第一首歌", 0.9, "用户要求收藏"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                new AgentCapabilityRegistry(),
+                null
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "收藏第一首歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                new AgentCapabilityRegistry().manifest(true)
+        ));
+
+        assertEquals(1, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().getFirst().status());
+        assertTrue(evidence.observations().getFirst().resultJson().contains("tool_not_executable"));
+    }
+
+    @Test
+    void executesLocalPlaylistWriteWhenExecutorIsInjected() {
+        MusioPlaylistCapabilityExecutor playlistExecutor = mock(MusioPlaylistCapabilityExecutor.class);
+        when(playlistExecutor.executeAddSongToMusioPlaylist(any(), eq(Map.of("songId", "qqmusic:0"))))
+                .thenReturn("""
+                        {"success":true,"summary":"已帮你收藏到 Musio 歌单：晴天 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:0","provider":"QQMUSIC","title":"晴天","artists":["周杰伦"],"album":"叶惠美","durationSeconds":269,"artworkUrl":null}}
+                        """);
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "add_song_to_musio_playlist", Map.of("songId", "qqmusic:0"), "收藏歌曲", 0.9, "用户要求收藏"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                new AgentCapabilityRegistry(),
+                playlistExecutor
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "把这首歌加入歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                new AgentCapabilityRegistry().manifest(true),
+                1
+        ));
+
+        assertEquals(1, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SUCCESS, evidence.observations().getFirst().status());
+        assertEquals("playlist", evidence.completedTaskType());
+        assertEquals(1, evidence.songs().size());
+    }
+
     private static class FinalAnswerPlanner extends AgentStepPlanner {
         @Override
         public AgentStepAction nextAction(MusioConfig.Ai ai, AgentLoopState state) {
@@ -410,6 +511,7 @@ class AgentLoopRunnerTest {
                 targetSong,
                 "search",
                 List.of("search_songs 成功，歌曲 1 首：晴天 id=qqmusic:0"),
+                null,
                 Instant.EPOCH
         );
     }

@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentLlmLogger;
 import com.musio.agent.AgentRunContext;
 import com.musio.agent.ConversationHistoryMessage;
+import com.musio.agent.capability.AgentCapabilityManifest;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
 import com.musio.model.AgentTaskMemory;
@@ -25,33 +27,29 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 @Component
 public class AgentStepPlanner {
     private static final Logger log = LoggerFactory.getLogger(AgentStepPlanner.class);
     private static final double MIN_CONFIDENCE = 0.55;
-    private static final Set<String> ALLOWED_READ_TOOLS = Set.of(
-            "search_songs",
-            "get_user_music_profile",
-            "get_song_detail",
-            "get_lyrics",
-            "get_hot_comments",
-            "get_user_playlists",
-            "get_playlist_songs"
-    );
 
     private final SpringAiChatModelFactory chatModelFactory;
     private final ObjectMapper objectMapper;
+    private final AgentCapabilityRegistry capabilityRegistry;
 
     public AgentStepPlanner() {
-        this(null, new ObjectMapper());
+        this(null, new ObjectMapper(), new AgentCapabilityRegistry());
+    }
+
+    public AgentStepPlanner(SpringAiChatModelFactory chatModelFactory, ObjectMapper objectMapper) {
+        this(chatModelFactory, objectMapper, new AgentCapabilityRegistry());
     }
 
     @Autowired
-    public AgentStepPlanner(SpringAiChatModelFactory chatModelFactory, ObjectMapper objectMapper) {
+    public AgentStepPlanner(SpringAiChatModelFactory chatModelFactory, ObjectMapper objectMapper, AgentCapabilityRegistry capabilityRegistry) {
         this.chatModelFactory = chatModelFactory;
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
+        this.capabilityRegistry = capabilityRegistry == null ? new AgentCapabilityRegistry() : capabilityRegistry;
     }
 
     public AgentStepAction nextAction(MusioConfig.Ai ai, AgentLoopState state) {
@@ -60,8 +58,9 @@ public class AgentStepPlanner {
             logAction("step_planner", ai, fallback, "fallback");
             return fallback;
         }
+        AgentCapabilityManifest manifest = manifestFor(state);
         Prompt prompt = new Prompt(List.of(
-                new SystemMessage(plannerInstruction()),
+                new SystemMessage(plannerInstruction(manifest)),
                 new UserMessage("""
                         当前任务记忆：
                         %s
@@ -72,12 +71,16 @@ public class AgentStepPlanner {
                         本轮 observations：
                         %s
 
+                        本轮用户要求的歌曲数量：
+                        %s
+
                         当前用户输入：
                         %s
                         """.formatted(
                         taskMemoryPreview(state == null ? null : state.taskMemory()),
                         historyPreview(state == null ? List.of() : state.recentHistory()),
                         observationPreview(state == null ? List.of() : state.observations()),
+                        requestedSongCountPreview(state),
                         state == null ? "" : state.userMessage()
                 ))
         ));
@@ -97,7 +100,7 @@ public class AgentStepPlanner {
                     .call()
                     .content();
             AgentLlmLogger.logResponse("agent_step_planner", ai, content);
-            AgentStepAction action = parseAction(content)
+            AgentStepAction action = parseAction(content, manifest, state == null ? 0 : state.requestedSongCount())
                     .orElseGet(() -> AgentStepAction.finalAnswer("invalid_step_action", 0.0));
             logAction("agent_step_planner", ai, action, "model");
             return action;
@@ -110,10 +113,21 @@ public class AgentStepPlanner {
     }
 
     Optional<AgentStepAction> parseAction(String content) {
+        return parseAction(content, capabilityRegistry.readManifest());
+    }
+
+    Optional<AgentStepAction> parseAction(String content, AgentCapabilityManifest manifest) {
+        return parseAction(content, manifest, 0);
+    }
+
+    Optional<AgentStepAction> parseAction(String content, AgentCapabilityManifest manifest, int requestedSongCount) {
         if (content == null || content.isBlank()) {
             return Optional.empty();
         }
         try {
+            AgentCapabilityManifest effectiveManifest = manifest == null || manifest.isEmpty()
+                    ? capabilityRegistry.readManifest()
+                    : manifest;
             JsonNode root = objectMapper.readTree(extractJsonObject(content.strip()));
             double confidence = root.path("confidence").asDouble(0.0);
             if (confidence < MIN_CONFIDENCE) {
@@ -130,11 +144,11 @@ public class AgentStepPlanner {
             }
             Map<String, Object> arguments = arguments(root);
             if (actionType == AgentStepActionType.TOOL_CALL) {
-                if (!ALLOWED_READ_TOOLS.contains(toolName)) {
+                if (!effectiveManifest.allows(toolName)) {
                     logRejectedAction(toolName, "unknown_tool");
                     return Optional.empty();
                 }
-                arguments = cleanArguments(toolName, arguments);
+                arguments = cleanArguments(toolName, arguments, requestedSongCount);
                 if (!requiredArgumentsPresent(toolName, arguments)) {
                     logRejectedAction(toolName, "missing_required_argument");
                     return Optional.empty();
@@ -156,19 +170,18 @@ public class AgentStepPlanner {
         }
     }
 
-    private String plannerInstruction() {
+    private AgentCapabilityManifest manifestFor(AgentLoopState state) {
+        AgentCapabilityManifest manifest = state == null ? null : state.capabilityManifest();
+        return manifest == null || manifest.isEmpty() ? capabilityRegistry.readManifest() : manifest;
+    }
+
+    private String plannerInstruction(AgentCapabilityManifest manifest) {
         return """
                 你是 Musio 的 AgentStepPlanner。只输出 JSON 对象，不要 markdown，不要解释。
                 你每次只决定下一步 action；后端执行工具后，会把 observation 再交给你继续判断。
 
-                可用只读工具：
-                - search_songs {"keyword": string, "limit": number, "excludedTitles": string[]}：搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。
-                - get_user_music_profile {}：读取本地音乐画像摘要。
-                - get_song_detail {"songId": string}：读取歌曲详情。
-                - get_lyrics {"songId": string}：读取歌词。
-                - get_hot_comments {"songId": string, "limit": number}：读取热门评论。
-                - get_user_playlists {"limit": number}：读取用户歌单。
-                - get_playlist_songs {"playlistId": string, "limit": number}：读取歌单歌曲。
+                本轮可用能力：
+                %s
 
                 输出格式：
                 {"action":"tool_call|final_answer|request_confirmation|unsupported","toolName":"工具名或空","arguments":{},"publicActivity":"用户可见动作摘要","confidence":0.0到1.0,"reason":"为什么下一步这样做"}
@@ -181,9 +194,14 @@ public class AgentStepPlanner {
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.limit 必须显式填写；完全没有数量含义时默认 5。
+                - 如果“本轮用户要求的歌曲数量”是明确数字，search_songs.limit 不得超过这个数字；例如用户说“推荐一首”时 limit 必须是 1。
+                - 复合任务中的数量约束必须贯穿搜索、评论和收藏步骤；用户说一首时，只围绕一首歌继续读取评论和收藏。
                 - get_hot_comments.limit 默认 10，最大 30。
+                - 如果用户说“最热门的评论/一条评论/一条热评”，get_hot_comments.limit 应填写 1。
+                - add_song_to_musio_playlist 只有在用户已经明确确认收藏、且出现在“本轮可用能力”时才允许调用；它只写入本地 Musio 歌单，不代表 QQ 音乐账号收藏。
+                - add_song_to_musio_playlist 至少应提供 songId、songIndex、songTitle 三者之一；playlistId 缺省为 default。
                 - 不要输出 chain-of-thought。
-                """;
+                """.formatted(manifest.plannerToolList());
     }
 
     private Map<String, Object> arguments(JsonNode root) {
@@ -198,15 +216,17 @@ public class AgentStepPlanner {
         });
     }
 
-    private Map<String, Object> cleanArguments(String toolName, Map<String, Object> arguments) {
+    private Map<String, Object> cleanArguments(String toolName, Map<String, Object> arguments, int requestedSongCount) {
         Map<String, Object> cleaned = new LinkedHashMap<>(arguments == null ? Map.of() : arguments);
         if ("search_songs".equals(toolName)) {
             cleaned.put("keyword", text(cleaned, "keyword"));
             Integer limit = cleanRequiredLimit(cleaned.get("limit"), 1, 20);
-            if (limit == null) {
+            if (limit == null && requestedSongCount > 0) {
+                cleaned.put("limit", Math.min(requestedSongCount, 20));
+            } else if (limit == null) {
                 cleaned.remove("limit");
             } else {
-                cleaned.put("limit", limit);
+                cleaned.put("limit", requestedSongCount > 0 ? Math.min(limit, requestedSongCount) : limit);
             }
             List<String> excludedTitles = stringList(cleaned.get("excludedTitles"));
             if (excludedTitles.isEmpty()) {
@@ -228,7 +248,24 @@ public class AgentStepPlanner {
             cleaned.put("playlistId", text(cleaned, "playlistId"));
             cleaned.put("limit", cleanLimit(cleaned.get("limit"), 20, 1, 50));
         }
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(toolName)) {
+            cleaned.put("playlistId", text(cleaned, "playlistId").isBlank() ? "default" : text(cleaned, "playlistId"));
+            cleaned.put("songId", text(cleaned, "songId"));
+            cleaned.put("songTitle", text(cleaned, "songTitle"));
+            cleaned.put("artist", text(cleaned, "artist"));
+            Integer songIndex = cleanRequiredLimit(cleaned.get("songIndex"), 1, 100);
+            if (songIndex == null) {
+                cleaned.remove("songIndex");
+            } else {
+                cleaned.put("songIndex", songIndex);
+            }
+        }
         return cleaned;
+    }
+
+    private String requestedSongCountPreview(AgentLoopState state) {
+        int count = state == null ? 0 : state.requestedSongCount();
+        return count <= 0 ? "未明确，缺省按工具规则处理" : String.valueOf(count);
     }
 
     private boolean requiredArgumentsPresent(String toolName, Map<String, Object> arguments) {
@@ -236,6 +273,9 @@ public class AgentStepPlanner {
             case "get_song_detail", "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId");
             case "get_playlist_songs" -> hasText(arguments, "playlistId");
             case "search_songs" -> hasText(arguments, "keyword") && hasInteger(arguments, "limit");
+            case AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST -> hasText(arguments, "songId")
+                    || hasText(arguments, "songTitle")
+                    || hasInteger(arguments, "songIndex");
             default -> true;
         };
     }

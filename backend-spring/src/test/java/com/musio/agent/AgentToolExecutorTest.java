@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentToolExecutorTest {
@@ -44,6 +45,23 @@ class AgentToolExecutorTest {
         assertTrue(executions.getFirst().resultJson().contains("晴天"));
         assertEquals("get_hot_comments", executions.get(1).toolName());
         assertTrue(executions.get(1).resultJson().contains("整个故事都在下雨"));
+    }
+
+    @Test
+    void hotCommentsFiltersGuideCommentsAndSortsByLikedCount() {
+        AgentToolExecutor executor = new AgentToolExecutor(tools(new UnsortedCommentsProvider(), null));
+        AgentToolPlan plan = new AgentToolPlan(List.of(
+                new AgentToolCall("get_hot_comments", Map.of("songId", "qqmusic:1", "limit", 1))
+        ), 0.9);
+
+        List<AgentToolExecution> executions = executor.execute(plan);
+
+        assertEquals(1, executions.size());
+        String resultJson = executions.getFirst().resultJson();
+        assertTrue(resultJson.contains("\"count\":1"));
+        assertTrue(resultJson.contains("真正的高赞用户评论"));
+        assertFalse(resultJson.contains("@元宝 介绍下这首歌"));
+        assertFalse(resultJson.contains("Q音辅导员"));
     }
 
     @Test
@@ -109,9 +127,13 @@ class AgentToolExecutorTest {
     }
 
     private MusicReadTools tools(MusicProfileService musicProfileService) {
+        return tools(new FakeProvider(), musicProfileService);
+    }
+
+    private MusicReadTools tools(MusicProvider provider, MusicProfileService musicProfileService) {
         AgentEventBus eventBus = new AgentEventBus();
         return new MusicReadTools(
-                new MusicProviderGateway(List.of(new FakeProvider())),
+                new MusicProviderGateway(List.of(provider)),
                 musicProfileService,
                 eventBus,
                 new ObjectMapper(),
@@ -177,6 +199,17 @@ class AgentToolExecutorTest {
         @Override
         public Lyrics getLyrics(String songId) {
             return new Lyrics(songId, ProviderType.QQMUSIC, "从前从前有个人爱你很久", null);
+        }
+    }
+
+    private static class UnsortedCommentsProvider extends FakeProvider {
+        @Override
+        public List<Comment> getComments(String songId) {
+            return List.of(
+                    new Comment("comment:guide", songId, ProviderType.QQMUSIC, "Q音辅导员", "@元宝 介绍下这首歌", 999999, Instant.EPOCH),
+                    new Comment("comment:low", songId, ProviderType.QQMUSIC, "UserA", "普通评论", 10, Instant.EPOCH),
+                    new Comment("comment:top", songId, ProviderType.QQMUSIC, "UserB", "真正的高赞用户评论", 2000, Instant.EPOCH)
+            );
         }
     }
 

@@ -333,13 +333,14 @@ public class AgentTurnPlanner {
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 5。
                 - recommend_songs.arguments.count 必须显式填写。根据当前用户输入和 effectiveRequest 的推荐数量填写；完全没有数量含义时默认 5。
+                - 用户说“一首/1首/一个/一支/一曲”时，search_songs.limit 或 recommend_songs.count 必须填 1，不能使用默认 5。
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
-                - 用户说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌”时，使用 add_song_to_musio_playlist，taskType=playlist，playlistId 默认 default。
+                - 用户说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 add_song_to_musio_playlist 只表示待确认写入意图；后端必须等用户下一轮确认后才真正写入。
                 - 如果用户要收藏“刚才那首/第一首/第二首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；能确定序号时填写 songIndex，能确定 songId 时填写 songId。
                 - 如果用户明确给出歌名或歌手但没有 songId，add_song_to_musio_playlist 填 songTitle/artist；后端会先解析或搜索真实歌曲。
-                - request_confirmation 只用于未来写操作或账号动作；当前只读工具可以直接 use_tools。
-                - add_song_to_musio_playlist 是本地 Musio 歌单写入，MVP 阶段可以直接 use_tools，不需要 request_confirmation。
+                - add_song_to_musio_playlist 是本地 Musio 歌单写入，不是只读工具；不要声称它已经执行成功，除非当前用户输入是明确确认语句。
+                - 当前只读工具可以直接 use_tools；本地 Musio 歌单写入必须等待用户确认。
                 - 不需要工具时不要为了展示能力而调用工具。
                 - 不要输出 chain-of-thought。
                 """;

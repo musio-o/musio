@@ -16,6 +16,7 @@ public record AgentTaskMemory(
         Song lastTargetSong,
         String lastCompletedTaskType,
         List<String> lastObservationSummaries,
+        PendingLocalPlaylistAdd pendingLocalPlaylistAdd,
         Instant updatedAt
 ) {
     public AgentTaskMemory {
@@ -41,6 +42,7 @@ public record AgentTaskMemory(
                 null,
                 "",
                 List.of(),
+                null,
                 Instant.EPOCH
         );
     }

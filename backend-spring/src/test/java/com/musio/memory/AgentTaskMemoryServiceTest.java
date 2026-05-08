@@ -2,6 +2,7 @@ package com.musio.memory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import org.junit.jupiter.api.Test;
@@ -89,6 +90,22 @@ class AgentTaskMemoryServiceTest {
         assertEquals("qqmusic:1", memory.lastTargetSong().id());
         assertEquals("comments", memory.lastCompletedTaskType());
         assertEquals(2, memory.lastObservationSummaries().size());
+    }
+
+    @Test
+    void recordsAndClearsPendingLocalPlaylistAdd() {
+        AgentTaskMemoryService service = service();
+        Song song = new Song("qqmusic:1", ProviderType.QQMUSIC, "晴天", List.of("周杰伦"), "叶惠美", 269, null);
+
+        service.recordPendingLocalPlaylistAdd("local", new PendingLocalPlaylistAdd("default", song, "帮我收藏晴天", null));
+
+        AgentTaskMemory pendingMemory = service.read("local");
+        assertEquals("qqmusic:1", pendingMemory.pendingLocalPlaylistAdd().song().id());
+        assertEquals("qqmusic:1", pendingMemory.lastTargetSong().id());
+
+        service.clearPendingLocalPlaylistAdd("local");
+
+        assertEquals(null, service.read("local").pendingLocalPlaylistAdd());
     }
 
     private AgentTaskMemoryService service() {

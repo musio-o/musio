@@ -3,9 +3,13 @@ package com.musio.agent.loop;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentToolExecutor;
+import com.musio.agent.capability.AgentCapabilityManifest;
+import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
 import com.musio.config.MusioConfig;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Song;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,20 +23,13 @@ import java.util.Set;
 public class AgentLoopRunner {
     private static final Logger log = LoggerFactory.getLogger(AgentLoopRunner.class);
     private static final int MAX_STEPS = 5;
-    private static final Set<String> ALLOWED_READ_TOOLS = Set.of(
-            "search_songs",
-            "get_user_music_profile",
-            "get_song_detail",
-            "get_lyrics",
-            "get_hot_comments",
-            "get_user_playlists",
-            "get_playlist_songs"
-    );
 
     private final AgentStepPlanner stepPlanner;
     private final AgentToolExecutor toolExecutor;
     private final AgentObservationBuilder observationBuilder;
     private final ObjectMapper objectMapper;
+    private final AgentCapabilityRegistry capabilityRegistry;
+    private final MusioPlaylistCapabilityExecutor musioPlaylistCapabilityExecutor;
 
     public AgentLoopRunner(
             AgentStepPlanner stepPlanner,
@@ -40,10 +37,24 @@ public class AgentLoopRunner {
             AgentObservationBuilder observationBuilder,
             ObjectMapper objectMapper
     ) {
+        this(stepPlanner, toolExecutor, observationBuilder, objectMapper, new AgentCapabilityRegistry(), null);
+    }
+
+    @Autowired
+    public AgentLoopRunner(
+            AgentStepPlanner stepPlanner,
+            AgentToolExecutor toolExecutor,
+            AgentObservationBuilder observationBuilder,
+            ObjectMapper objectMapper,
+            AgentCapabilityRegistry capabilityRegistry,
+            MusioPlaylistCapabilityExecutor musioPlaylistCapabilityExecutor
+    ) {
         this.stepPlanner = stepPlanner;
         this.toolExecutor = toolExecutor;
         this.observationBuilder = observationBuilder;
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
+        this.capabilityRegistry = capabilityRegistry == null ? new AgentCapabilityRegistry() : capabilityRegistry;
+        this.musioPlaylistCapabilityExecutor = musioPlaylistCapabilityExecutor;
     }
 
     public AgentLoopEvidence run(MusioConfig.Ai ai, AgentLoopState initialState) {
@@ -59,6 +70,9 @@ public class AgentLoopRunner {
                 return evidence(state);
             }
             state = executeToolAction(state, step, action, executedCalls);
+            if (shouldFinishAfterTool(state, action)) {
+                return evidence(state);
+            }
             step++;
         }
         for (; step < MAX_STEPS; step++) {
@@ -74,6 +88,9 @@ public class AgentLoopRunner {
                 continue;
             }
             state = executeToolAction(state, step, action, executedCalls);
+            if (shouldFinishAfterTool(state, action)) {
+                return evidence(state);
+            }
         }
         return evidence(state);
     }
@@ -93,16 +110,19 @@ public class AgentLoopRunner {
         if (!validation.valid()) {
             return appendSkipped(state, step, action, validation.reason());
         }
-        String resultJson = toolExecutor.executeTool(action.toolName(), action.arguments())
-                .orElseGet(() -> failureJson("tool_not_executable"));
+        String resultJson = executeTool(state, action);
         AgentObservation observation = observationBuilder.build(stepId(step), action.toolName(), action.arguments(), resultJson);
         executedCalls.add(callKey(action));
         return state.withObservation(observation);
     }
 
     private ValidationResult validate(AgentStepAction action, AgentLoopState state, Set<String> executedCalls) {
-        if (!ALLOWED_READ_TOOLS.contains(action.toolName())) {
+        AgentCapabilityManifest manifest = manifestFor(state);
+        if (!manifest.allows(action.toolName())) {
             return ValidationResult.rejected("unknown_tool");
+        }
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName()) && musioPlaylistCapabilityExecutor == null) {
+            return ValidationResult.rejected("tool_not_executable");
         }
         if (executedCalls.contains(callKey(action))) {
             return ValidationResult.rejected("duplicate_tool_call");
@@ -117,6 +137,40 @@ public class AgentLoopRunner {
             return ValidationResult.rejected("playlist_id_not_observed");
         }
         return ValidationResult.accepted();
+    }
+
+    private String executeTool(AgentLoopState state, AgentStepAction action) {
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName())) {
+            return musioPlaylistCapabilityExecutor.executeAddSongToMusioPlaylist(state, action.arguments());
+        }
+        return toolExecutor.executeTool(action.toolName(), action.arguments())
+                .orElseGet(() -> failureJson("tool_not_executable"));
+    }
+
+    private boolean shouldFinishAfterTool(AgentLoopState state, AgentStepAction action) {
+        if (state == null || action == null) {
+            return false;
+        }
+        if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(action.toolName())) {
+            return true;
+        }
+        if (state.requestedSongCount() == 1
+                && state.capabilityManifest().allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
+                && successfulToolObserved(state, "get_hot_comments")
+                && successfulToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
+            return true;
+        }
+        return false;
+    }
+
+    private boolean successfulToolObserved(AgentLoopState state, String toolName) {
+        return state.observations().stream()
+                .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS && toolName.equals(observation.toolName()));
+    }
+
+    private AgentCapabilityManifest manifestFor(AgentLoopState state) {
+        AgentCapabilityManifest manifest = state == null ? null : state.capabilityManifest();
+        return manifest == null || manifest.isEmpty() ? capabilityRegistry.readManifest() : manifest;
     }
 
     private AgentLoopState appendSkipped(AgentLoopState state, int step, AgentStepAction action, String reason) {
@@ -157,7 +211,7 @@ public class AgentLoopRunner {
                 case "get_hot_comments" -> "comments";
                 case "get_lyrics" -> "lyrics";
                 case "get_song_detail" -> "detail";
-                case "get_user_playlists", "get_playlist_songs" -> "playlist";
+                case "get_user_playlists", "get_playlist_songs", "add_song_to_musio_playlist" -> "playlist";
                 case "get_user_music_profile" -> "profile";
                 case "search_songs" -> "search";
                 default -> "";

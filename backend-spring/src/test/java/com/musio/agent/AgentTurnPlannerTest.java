@@ -188,6 +188,7 @@ class AgentTurnPlannerTest {
                 null,
                 "",
                 List.of(),
+                null,
                 Instant.EPOCH
         );
 

@@ -2,6 +2,7 @@ package com.musio.memory;
 
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.AgentToolFailure;
+import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import org.springframework.stereotype.Service;
 
@@ -59,6 +60,7 @@ public class AgentTaskMemoryService {
                 preservePreviousSongContext ? previous.lastTargetSong() : null,
                 preservePreviousSongContext ? previous.lastCompletedTaskType() : "",
                 preservePreviousSongContext ? previous.lastObservationSummaries() : List.of(),
+                previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
         store.write(userId, next);
@@ -87,6 +89,7 @@ public class AgentTaskMemoryService {
                 limitedSongs.isEmpty() ? previous.lastTargetSong() : limitedSongs.getFirst(),
                 previous.lastCompletedTaskType(),
                 previous.lastObservationSummaries(),
+                previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
         store.write(userId, next);
@@ -108,6 +111,7 @@ public class AgentTaskMemoryService {
                 targetSong == null ? previous.lastTargetSong() : targetSong,
                 safe(completedTaskType).isBlank() ? previous.lastCompletedTaskType() : safe(completedTaskType),
                 limitedStrings(observationSummaries, MAX_OBSERVATION_SUMMARIES),
+                previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
         store.write(userId, next);
@@ -132,6 +136,51 @@ public class AgentTaskMemoryService {
                 previous.lastTargetSong(),
                 previous.lastCompletedTaskType(),
                 previous.lastObservationSummaries(),
+                previous.pendingLocalPlaylistAdd(),
+                Instant.now()
+        );
+        store.write(userId, next);
+        return next;
+    }
+
+    public AgentTaskMemory recordPendingLocalPlaylistAdd(String userId, PendingLocalPlaylistAdd pending) {
+        AgentTaskMemory previous = read(userId);
+        AgentTaskMemory next = new AgentTaskMemory(
+                userId,
+                previous.currentTask(),
+                previous.lastEffectiveRequest(),
+                previous.lastSearchKeyword(),
+                previous.lastSearchLimit(),
+                previous.lastResultSongs(),
+                previous.lastResultSongTitles(),
+                previous.avoidSongTitles(),
+                previous.lastToolFailures(),
+                pending == null || pending.song() == null ? previous.lastTargetSong() : pending.song(),
+                previous.lastCompletedTaskType(),
+                previous.lastObservationSummaries(),
+                pending,
+                Instant.now()
+        );
+        store.write(userId, next);
+        return next;
+    }
+
+    public AgentTaskMemory clearPendingLocalPlaylistAdd(String userId) {
+        AgentTaskMemory previous = read(userId);
+        AgentTaskMemory next = new AgentTaskMemory(
+                userId,
+                previous.currentTask(),
+                previous.lastEffectiveRequest(),
+                previous.lastSearchKeyword(),
+                previous.lastSearchLimit(),
+                previous.lastResultSongs(),
+                previous.lastResultSongTitles(),
+                previous.avoidSongTitles(),
+                previous.lastToolFailures(),
+                previous.lastTargetSong(),
+                previous.lastCompletedTaskType(),
+                previous.lastObservationSummaries(),
+                null,
                 Instant.now()
         );
         store.write(userId, next);

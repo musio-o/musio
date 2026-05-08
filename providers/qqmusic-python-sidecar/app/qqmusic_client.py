@@ -73,8 +73,8 @@ class QQMusicClient:
     async def comments(self, song_id: str) -> list[Comment]:
         async with self._client() as client:
             track = await self._resolve_song(client, song_id)
-            result = await client.comment.get_hot_comments(track.id, page_size=20)
-            return [
+            result = await client.comment.get_hot_comments(track.id, page_size=50)
+            comments = [
                 Comment(
                     id=item.cmid,
                     song_id=self._song_identity(track),
@@ -85,6 +85,7 @@ class QQMusicClient:
                 )
                 for item in result.comments
             ]
+            return self._rank_hot_comments(comments)
 
     async def profile(self) -> UserProfile:
         credential = self._credential()
@@ -503,6 +504,29 @@ class QQMusicClient:
         if value is None:
             return ""
         return str(value).strip()
+
+    def _rank_hot_comments(self, comments: list[Comment]) -> list[Comment]:
+        return sorted(
+            (comment for comment in comments if self._is_user_hot_comment(comment)),
+            key=lambda comment: self._positive_int(comment.liked_count) or 0,
+            reverse=True,
+        )
+
+    def _is_user_hot_comment(self, comment: Comment) -> bool:
+        author = self._text(comment.author_name)
+        text = self._text(comment.text)
+        if not text:
+            return False
+        if author in {"Q音辅导员", "QQ音乐小助手", "QQ音乐"}:
+            return False
+        normalized = text.replace(" ", "").replace("\u3000", "")
+        blocked_fragments = (
+            "@元宝介绍下这首歌",
+            "元宝介绍下这首歌",
+            "介绍下这首歌",
+            "介绍一下这首歌",
+        )
+        return not any(fragment in normalized for fragment in blocked_fragments)
 
     async def _profile_from_credential(self, client: Client, credential: Credential) -> UserProfile:
         if credential.encrypt_uin:

@@ -19,6 +19,7 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -123,6 +124,8 @@ public class MusicReadTools {
         int actualLimit = clamp(limit, 10, 1, 30);
         return runTool("get_hot_comments", Map.of("songId", songId, "limit", actualLimit), () -> {
             List<Comment> comments = providerGateway.defaultProvider().getComments(songId).stream()
+                    .filter(this::isUserHotComment)
+                    .sorted(Comparator.comparingInt(this::likedCount).reversed())
                     .limit(actualLimit)
                     .toList();
             return Map.of("success", true, "count", comments.size(), "comments", comments);
@@ -267,6 +270,25 @@ public class MusicReadTools {
         return normalizedExclusions.stream().anyMatch(excluded ->
                 title.equals(excluded) || title.contains(excluded) || excluded.contains(title)
         );
+    }
+
+    private boolean isUserHotComment(Comment comment) {
+        if (comment == null || comment.text() == null || comment.text().isBlank()) {
+            return false;
+        }
+        String author = comment.authorName() == null ? "" : comment.authorName().strip();
+        if (List.of("Q音辅导员", "QQ音乐小助手", "QQ音乐").contains(author)) {
+            return false;
+        }
+        String normalizedText = comment.text().replaceAll("[\\s\\u3000]+", "");
+        return !normalizedText.contains("@元宝介绍下这首歌")
+                && !normalizedText.contains("元宝介绍下这首歌")
+                && !normalizedText.contains("介绍下这首歌")
+                && !normalizedText.contains("介绍一下这首歌");
+    }
+
+    private int likedCount(Comment comment) {
+        return comment == null || comment.likedCount() == null ? 0 : Math.max(0, comment.likedCount());
     }
 
     private String normalizeTitle(String value) {

@@ -188,6 +188,7 @@ class AgentTaskContextResolverTest {
                 null,
                 "",
                 List.of(),
+                null,
                 java.time.Instant.now()
         );
 
@@ -212,6 +213,7 @@ class AgentTaskContextResolverTest {
                 null,
                 "",
                 List.of(),
+                null,
                 java.time.Instant.now()
         );
 
@@ -235,6 +237,7 @@ class AgentTaskContextResolverTest {
                 null,
                 "",
                 List.of(),
+                null,
                 java.time.Instant.now()
         );
         AgentTaskContext context = AgentTaskContext.agent(
@@ -269,6 +272,7 @@ class AgentTaskContextResolverTest {
                 null,
                 "",
                 List.of(),
+                null,
                 java.time.Instant.now()
         );
         AgentTaskContext context = AgentTaskContext.agent(

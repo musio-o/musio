@@ -68,6 +68,10 @@ public class AgentObservationBuilder {
             String message = root.path("message").isTextual() ? root.path("message").asText() : "未提供错误原因";
             return toolName + " 失败：" + message;
         }
+        if ("add_song_to_musio_playlist".equals(toolName)) {
+            String summary = root.path("summary").asText("");
+            return summary.isBlank() ? toolName + " 成功，已写入 Musio 本地歌单" : summary;
+        }
         if (!songs.isEmpty()) {
             return toolName + " 成功，歌曲 " + songs.size() + " 首：" + songRefs(songs);
         }
