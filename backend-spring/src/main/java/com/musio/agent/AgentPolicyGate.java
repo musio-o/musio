@@ -18,6 +18,12 @@ public class AgentPolicyGate {
         return registry.manifest(allowsLocalPlaylistWrite(userMessage, turnPlan));
     }
 
+    public AgentCapabilityManifest manifestFor(AgentGoal goal, AgentTurnPlan turnPlan) {
+        String userMessage = goal == null ? "" : goal.userMessage();
+        boolean allowLocalWrite = goal != null && goal.localWriteIntent();
+        return registry.manifest(allowLocalWrite || allowsLocalPlaylistWrite(userMessage, turnPlan));
+    }
+
     public boolean allowsLocalPlaylistWrite(String userMessage, AgentTurnPlan turnPlan) {
         if (turnPlan != null && turnPlan.hasTool(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
             return true;

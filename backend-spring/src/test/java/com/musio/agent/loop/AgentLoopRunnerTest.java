@@ -2,7 +2,13 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentToolExecutor;
+import com.musio.agent.capability.AgentCapability;
+import com.musio.agent.capability.AgentCapabilityArgumentContext;
+import com.musio.agent.capability.AgentCapabilityExecutor;
+import com.musio.agent.capability.AgentCapabilityHandler;
 import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.AgentCapabilityValidationResult;
+import com.musio.agent.capability.CapabilityEffect;
 import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
@@ -26,14 +32,12 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 class AgentLoopRunnerTest {
     @Test
@@ -57,6 +61,32 @@ class AgentLoopRunnerTest {
         AgentLoopEvidence evidence = runner.run(null, state);
 
         assertFalse(evidence.hasObservations());
+    }
+
+    @Test
+    void outcomePreservesTerminalReason() {
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求确认", 0.9, "account_write_requires_confirmation")
+                )),
+                null,
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "收藏到 QQ 音乐账号",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0
+        ));
+
+        assertEquals(AgentLoopOutcomeType.NEEDS_CONFIRMATION, outcome.type());
+        assertEquals("account_write_requires_confirmation", outcome.reason());
+        assertFalse(outcome.hasObservations());
     }
 
     @Test
@@ -147,6 +177,33 @@ class AgentLoopRunnerTest {
         assertEquals(AgentObservationStatus.SUCCESS, evidence.observations().getFirst().status());
         assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().get(1).status());
         assertTrue(evidence.observations().get(1).resultJson().contains("duplicate_tool_call"));
+    }
+
+    @Test
+    void rejectsToolCallMissingCapabilityRequiredArgument() {
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "search_songs", Map.of("keyword", "周杰伦"), "搜索周杰伦", 0.9, "缺少 limit"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "搜索周杰伦",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0
+        ));
+
+        assertEquals(1, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().getFirst().status());
+        assertTrue(evidence.observations().getFirst().resultJson().contains("missing_required_argument"));
     }
 
     @Test
@@ -407,11 +464,9 @@ class AgentLoopRunnerTest {
 
     @Test
     void executesLocalPlaylistWriteWhenExecutorIsInjected() {
-        MusioPlaylistCapabilityExecutor playlistExecutor = mock(MusioPlaylistCapabilityExecutor.class);
-        when(playlistExecutor.executeAddSongToMusioPlaylist(any(), eq(Map.of("songId", "qqmusic:0"))))
-                .thenReturn("""
-                        {"success":true,"summary":"已帮你收藏到 Musio 歌单：晴天 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:0","provider":"QQMUSIC","title":"晴天","artists":["周杰伦"],"album":"叶惠美","durationSeconds":269,"artworkUrl":null}}
-                        """);
+        MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：晴天 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:0","provider":"QQMUSIC","title":"晴天","artists":["周杰伦"],"album":"叶惠美","durationSeconds":269,"artworkUrl":null}}
+                """);
         AgentLoopRunner runner = new AgentLoopRunner(
                 new SequencedPlanner(List.of(
                         new AgentStepAction(AgentStepActionType.TOOL_CALL, "add_song_to_musio_playlist", Map.of("songId", "qqmusic:0"), "收藏歌曲", 0.9, "用户要求收藏"),
@@ -440,6 +495,98 @@ class AgentLoopRunnerTest {
         assertEquals(AgentObservationStatus.SUCCESS, evidence.observations().getFirst().status());
         assertEquals("playlist", evidence.completedTaskType());
         assertEquals(1, evidence.songs().size());
+    }
+
+    @Test
+    void executesRecommendationCapabilityThroughUnifiedHandlerPath() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "深夜写代码", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler))
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首适合深夜写代码听的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                1
+        ));
+
+        assertEquals(1, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SUCCESS, evidence.observations().getFirst().status());
+        assertEquals("recommend", evidence.completedTaskType());
+        assertEquals("安静", evidence.songs().getFirst().title());
+    }
+
+    private static class StubPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
+        private final String resultJson;
+
+        private StubPlaylistCapabilityExecutor(String resultJson) {
+            super(null, null, null, null, new ObjectMapper());
+            this.resultJson = resultJson;
+        }
+
+        @Override
+        public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
+            return resultJson;
+        }
+    }
+
+    private static class StubRecommendationCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "recommend_songs",
+                CapabilityEffect.READ,
+                "测试推荐能力。",
+                "{\"request\": string, \"count\": number}",
+                Set.of("request", "count")
+        );
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public Map<String, Object> normalizeArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return arguments == null ? Map.of() : arguments;
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            return Optional.of("""
+                    {"success":true,"summary":"已生成并匹配 1 首推荐歌曲。","songs":[{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}],"recommendations":[{"songId":"qqmusic:quiet","title":"安静","artists":["周杰伦"],"reason":"钢琴和慢速旋律适合深夜专注。","matchedQuery":"安静 周杰伦"}]}
+                    """);
+        }
     }
 
     private static class FinalAnswerPlanner extends AgentStepPlanner {

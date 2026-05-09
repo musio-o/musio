@@ -23,8 +23,8 @@ record AgentTurnPlan(
             "get_user_playlists",
             "get_playlist_songs"
     );
-    private static final Set<String> RECOMMENDATION_TOOLS = Set.of("recommend_songs");
     private static final Set<String> LOCAL_WRITE_TOOLS = Set.of("add_song_to_musio_playlist");
+    private static final Set<String> ACCOUNT_WRITE_TOOLS = Set.of();
 
     static AgentTurnPlan respondOnly(String effectiveRequest, double confidence, String fallbackReason) {
         return new AgentTurnPlan(
@@ -75,20 +75,20 @@ record AgentTurnPlan(
     }
 
     boolean usesTools() {
-        return disposition == TurnDisposition.USE_TOOLS && toolCalls != null && !toolCalls.isEmpty();
+        return disposition == TurnDisposition.USE_TOOLS;
     }
 
     boolean hasLocalWriteTools() {
         return localWriteToolCalls().stream().findAny().isPresent();
     }
 
+    boolean hasAccountWriteTools() {
+        return nonBlankToolCalls().stream().anyMatch(this::isAccountWriteTool);
+    }
+
     boolean hasOnlyLocalWriteTools() {
         List<AgentToolCall> executableCalls = nonBlankToolCalls();
         return !executableCalls.isEmpty() && executableCalls.stream().allMatch(this::isLocalWriteTool);
-    }
-
-    boolean hasRecommendationTool() {
-        return nonBlankToolCalls().stream().anyMatch(this::isRecommendationTool);
     }
 
     List<AgentToolCall> readOnlyLoopToolCalls() {
@@ -109,9 +109,6 @@ record AgentTurnPlan(
     }
 
     private String effectiveTaskType() {
-        if (hasRecommendationTool()) {
-            return "recommend";
-        }
         return safe(taskType).isBlank() ? "unknown" : safe(taskType);
     }
 
@@ -126,9 +123,6 @@ record AgentTurnPlan(
             Map<String, Object> arguments = call.arguments();
             if ("search_songs".equals(call.toolName())) {
                 return new ToolIntent(text(arguments, "keyword"), integer(arguments, "limit"), stringList(arguments, "excludedTitles"));
-            }
-            if ("recommend_songs".equals(call.toolName())) {
-                return new ToolIntent("", integer(arguments, "count"), stringList(arguments, "excludedTitles"));
             }
         }
         return new ToolIntent("", 0, List.of());
@@ -163,12 +157,12 @@ record AgentTurnPlan(
         return call != null && READ_ONLY_LOOP_TOOLS.contains(call.toolName());
     }
 
-    private boolean isRecommendationTool(AgentToolCall call) {
-        return call != null && RECOMMENDATION_TOOLS.contains(call.toolName());
-    }
-
     private boolean isLocalWriteTool(AgentToolCall call) {
         return call != null && LOCAL_WRITE_TOOLS.contains(call.toolName());
+    }
+
+    private boolean isAccountWriteTool(AgentToolCall call) {
+        return call != null && ACCOUNT_WRITE_TOOLS.contains(call.toolName());
     }
 
     private static String text(Map<String, Object> arguments, String key) {
@@ -249,4 +243,3 @@ record AgentTurnMemoryUse(
         return String.join(",", usedFields == null ? List.of() : usedFields);
     }
 }
-

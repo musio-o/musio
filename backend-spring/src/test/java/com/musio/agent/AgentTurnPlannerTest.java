@@ -100,7 +100,7 @@ class AgentTurnPlannerTest {
     }
 
     @Test
-    void parsesRecommendationPlanWithInternalRecommendTool() {
+    void keepsRecommendationIntentWhenModelOutputsLegacyRecommendTool() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {
                   "disposition": "use_tools",
@@ -117,14 +117,15 @@ class AgentTurnPlannerTest {
 
         assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
         assertEquals("recommend", plan.taskType());
-        assertTrue(plan.hasTool("recommend_songs"));
+        assertTrue(plan.usesTools());
+        assertTrue(plan.toolCalls().isEmpty());
         assertTrue(plan.toToolPlan().toolCalls().isEmpty());
 
         AgentTaskContext context = plan.toLegacyTaskContext("给我推荐 5 首适合深夜写代码听的歌。");
 
         assertTrue(context.agentTask());
         assertEquals("recommend", context.taskType());
-        assertEquals(5, context.searchLimit());
+        assertEquals(0, context.searchLimit());
         assertEquals("", context.searchKeyword());
     }
 
@@ -153,7 +154,7 @@ class AgentTurnPlannerTest {
     }
 
     @Test
-    void dropsRecommendationToolWithoutCountAndFallsBackToRespondOnly() {
+    void parsesRecommendationPlanWithoutToolHints() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {
                   "disposition": "use_tools",
@@ -161,16 +162,16 @@ class AgentTurnPlannerTest {
                   "contextMode": "new_task",
                   "effectiveRequest": "推荐适合深夜写代码听的歌",
                   "memoryUse": {"usesTaskMemory": false, "usedFields": [], "reason": "新的场景推荐任务"},
-                  "toolCalls": [
-                    {"toolName": "recommend_songs", "arguments": {"request": "推荐适合深夜写代码听的歌"}}
-                  ],
+                  "toolCalls": [],
                   "confidence": 0.92
                 }
                 """, "推荐适合深夜写代码听的歌").orElseThrow();
 
-        assertEquals(TurnDisposition.RESPOND_ONLY, plan.disposition());
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("recommend", plan.taskType());
+        assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
-        assertEquals("no_valid_tool_calls", plan.fallbackReason());
+        assertEquals("", plan.fallbackReason());
     }
 
     @Test
@@ -200,7 +201,7 @@ class AgentTurnPlannerTest {
     }
 
     @Test
-    void dropsUnknownToolAndFallsBackToRespondOnly() {
+    void dropsUnknownToolButKeepsMusicLoopIntent() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {
                   "disposition": "use_tools",
@@ -215,13 +216,15 @@ class AgentTurnPlannerTest {
                 }
                 """, "搜索后弦").orElseThrow();
 
-        assertEquals(TurnDisposition.RESPOND_ONLY, plan.disposition());
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("search", plan.taskType());
+        assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
-        assertEquals("no_valid_tool_calls", plan.fallbackReason());
+        assertEquals("", plan.fallbackReason());
     }
 
     @Test
-    void dropsSearchToolWithoutKeywordAndFallsBackToRespondOnly() {
+    void dropsInvalidSearchHintButKeepsMusicLoopIntent() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {
                   "disposition": "use_tools",
@@ -236,13 +239,15 @@ class AgentTurnPlannerTest {
                 }
                 """, "搜索歌曲").orElseThrow();
 
-        assertEquals(TurnDisposition.RESPOND_ONLY, plan.disposition());
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("search", plan.taskType());
+        assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
-        assertEquals("no_valid_tool_calls", plan.fallbackReason());
+        assertEquals("", plan.fallbackReason());
     }
 
     @Test
-    void dropsSearchToolWithoutLimitAndFallsBackToRespondOnly() {
+    void dropsSearchHintWithoutLimitButKeepsMusicLoopIntent() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {
                   "disposition": "use_tools",
@@ -257,9 +262,11 @@ class AgentTurnPlannerTest {
                 }
                 """, "换一首").orElseThrow();
 
-        assertEquals(TurnDisposition.RESPOND_ONLY, plan.disposition());
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertEquals("search", plan.taskType());
+        assertTrue(plan.usesTools());
         assertTrue(plan.toolCalls().isEmpty());
-        assertEquals("no_valid_tool_calls", plan.fallbackReason());
+        assertEquals("", plan.fallbackReason());
     }
 
     @Test

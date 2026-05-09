@@ -3,6 +3,10 @@ package com.musio.agent;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.capability.AgentCapabilityArgumentContext;
+import com.musio.agent.capability.AgentCapabilityManifest;
+import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
 import com.musio.model.AgentTaskMemory;
@@ -13,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -28,28 +33,28 @@ public class AgentTurnPlanner {
     private static final Logger log = LoggerFactory.getLogger(AgentTurnPlanner.class);
     private static final double MIN_CONFIDENCE = 0.55;
     private static final int MAX_TOOL_CALLS = 12;
-    private static final int DEFAULT_SEARCH_LIMIT = 5;
-    private static final Set<String> ALLOWED_TOOLS = Set.of(
-            "recommend_songs",
-            "search_songs",
-            "get_user_music_profile",
-            "get_song_detail",
-            "get_lyrics",
-            "get_hot_comments",
-            "get_user_playlists",
-            "get_playlist_songs",
-            "add_song_to_musio_playlist"
-    );
+    private static final Set<String> STEP_LOOP_ONLY_TOOLS = Set.of(AgentCapabilityRegistry.RECOMMEND_SONGS);
 
     private final SpringAiChatModelFactory chatModelFactory;
     private final ObjectMapper objectMapper;
+    private final AgentCapabilityRegistry capabilityRegistry;
 
     public AgentTurnPlanner(
             SpringAiChatModelFactory chatModelFactory,
             ObjectMapper objectMapper
     ) {
+        this(chatModelFactory, objectMapper, new AgentCapabilityRegistry());
+    }
+
+    @Autowired
+    public AgentTurnPlanner(
+            SpringAiChatModelFactory chatModelFactory,
+            ObjectMapper objectMapper,
+            AgentCapabilityRegistry capabilityRegistry
+    ) {
         this.chatModelFactory = chatModelFactory;
         this.objectMapper = objectMapper;
+        this.capabilityRegistry = capabilityRegistry == null ? new AgentCapabilityRegistry() : capabilityRegistry;
     }
 
     public AgentTurnPlan planTurn(
@@ -133,7 +138,7 @@ public class AgentTurnPlanner {
             if (disposition == TurnDisposition.RESPOND_ONLY) {
                 calls = List.of();
             }
-            if (disposition == TurnDisposition.USE_TOOLS && calls.isEmpty()) {
+            if (disposition == TurnDisposition.USE_TOOLS && calls.isEmpty() && !isLoopTaskType(taskType)) {
                 return Optional.of(AgentTurnPlan.respondOnly(
                         effectiveRequest.isBlank() ? originalMessage : effectiveRequest,
                         confidence,
@@ -178,7 +183,7 @@ public class AgentTurnPlanner {
         if (toolName.isBlank()) {
             toolName = text(callNode, "name");
         }
-        if (!ALLOWED_TOOLS.contains(toolName)) {
+        if (!allowedPlannerTools().contains(toolName)) {
             logRejectedTool(toolName, "unknown_tool");
             return Optional.empty();
         }
@@ -190,66 +195,17 @@ public class AgentTurnPlanner {
                 ? objectMapper.convertValue(argumentsNode, new TypeReference<LinkedHashMap<String, Object>>() {
                 })
                 : new LinkedHashMap<>();
-        Map<String, Object> cleanedArguments = cleanArguments(toolName, arguments);
-        if (!requiredArgumentsPresent(toolName, cleanedArguments)) {
-            logRejectedTool(toolName, "missing_required_argument");
+        Map<String, Object> cleanedArguments = normalizeArguments(toolName, arguments);
+        AgentCapabilityValidationResult validation = validateArguments(toolName, cleanedArguments);
+        if (!validation.valid()) {
+            logRejectedTool(toolName, validation.reason());
             return Optional.empty();
         }
         return Optional.of(new AgentToolCall(toolName, cleanedArguments));
     }
 
-    private Map<String, Object> cleanArguments(String toolName, Map<String, Object> arguments) {
-        Map<String, Object> cleaned = new LinkedHashMap<>(arguments == null ? Map.of() : arguments);
-        if ("search_songs".equals(toolName)) {
-            cleaned.put("keyword", text(cleaned, "keyword"));
-            Integer limit = cleanRequiredLimit(cleaned.get("limit"), 1, 20);
-            if (limit == null) {
-                cleaned.remove("limit");
-            } else {
-                cleaned.put("limit", limit);
-            }
-            List<String> excludedTitles = stringList(cleaned.get("excludedTitles"));
-            if (!excludedTitles.isEmpty()) {
-                cleaned.put("excludedTitles", excludedTitles);
-            } else {
-                cleaned.remove("excludedTitles");
-            }
-        }
-        if ("recommend_songs".equals(toolName)) {
-            cleaned.put("request", text(cleaned, "request"));
-            Integer count = cleanRequiredLimit(cleaned.get("count"), 1, 10);
-            if (count == null) {
-                cleaned.remove("count");
-            } else {
-                cleaned.put("count", count);
-            }
-            List<String> excludedTitles = stringList(cleaned.get("excludedTitles"));
-            if (!excludedTitles.isEmpty()) {
-                cleaned.put("excludedTitles", excludedTitles);
-            } else {
-                cleaned.remove("excludedTitles");
-            }
-        }
-        if ("get_hot_comments".equals(toolName)) {
-            cleaned.put("limit", cleanLimit(cleaned.get("limit"), 10, 1, 30));
-        }
-        if ("get_user_playlists".equals(toolName) || "get_playlist_songs".equals(toolName)) {
-            cleaned.put("limit", cleanLimit(cleaned.get("limit"), 20, 1, 50));
-        }
-        if ("add_song_to_musio_playlist".equals(toolName)) {
-            String playlistId = text(cleaned, "playlistId");
-            cleaned.put("playlistId", playlistId.isBlank() ? "default" : playlistId);
-            cleaned.put("songId", text(cleaned, "songId"));
-            cleaned.put("songTitle", text(cleaned, "songTitle"));
-            cleaned.put("artist", text(cleaned, "artist"));
-            Integer songIndex = cleanRequiredLimit(cleaned.get("songIndex"), 1, 20);
-            if (songIndex == null) {
-                cleaned.remove("songIndex");
-            } else {
-                cleaned.put("songIndex", songIndex);
-            }
-        }
-        return cleaned;
+    private Map<String, Object> normalizeArguments(String toolName, Map<String, Object> arguments) {
+        return capabilityRegistry.normalizeArguments(toolName, arguments, AgentCapabilityArgumentContext.turnPlanner());
     }
 
     private AgentTurnMemoryUse parseMemoryUse(JsonNode node) {
@@ -263,15 +219,8 @@ public class AgentTurnPlanner {
         );
     }
 
-    private boolean requiredArgumentsPresent(String toolName, Map<String, Object> arguments) {
-        return switch (toolName) {
-            case "get_song_detail", "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId");
-            case "get_playlist_songs" -> hasText(arguments, "playlistId");
-            case "search_songs" -> hasText(arguments, "keyword") && hasInteger(arguments, "limit");
-            case "recommend_songs" -> hasText(arguments, "request") && hasInteger(arguments, "count");
-            case "add_song_to_musio_playlist" -> true;
-            default -> true;
-        };
+    private AgentCapabilityValidationResult validateArguments(String toolName, Map<String, Object> arguments) {
+        return capabilityRegistry.validateArguments(toolName, arguments, AgentCapabilityArgumentContext.turnPlanner());
     }
 
     private TurnDisposition parseDisposition(String value) {
@@ -301,49 +250,54 @@ public class AgentTurnPlanner {
         return "new_task";
     }
 
+    private boolean isLoopTaskType(String taskType) {
+        return List.of("search", "recommend", "comments", "lyrics", "detail", "playlist", "profile", "playback").contains(taskType);
+    }
+
     private String plannerInstruction() {
         return """
                 你是 Musio 的 Turn Planner。只输出 JSON 对象，不要 markdown，不要解释。
                 所有用户输入都已经进入 Agent runtime；你的任务不是决定是否进入 Agent，而是决定本轮是否需要调用音乐能力。
 
-                可用只读工具：
-                - recommend_songs {"request": string, "count": number, "excludedTitles": string[]}：生成个性化推荐候选，并由后端精确解析成可播放歌曲卡片；适合开放推荐、场景推荐、风格推荐。excludedTitles 可选。
-                - search_songs {"keyword": string, "limit": number, "excludedTitles": string[]}：搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。
-                - get_user_music_profile {}：读取本地音乐画像摘要。
-                - get_song_detail {"songId": string}：读取歌曲详情。
-                - get_lyrics {"songId": string}：读取歌词。
-                - get_hot_comments {"songId": string, "limit": number}：读取热门评论。
-                - get_user_playlists {"limit": number}：读取用户歌单。
-                - get_playlist_songs {"playlistId": string, "limit": number}：读取歌单歌曲。
-
-                可用本地 Musio 写入能力：
-                - add_song_to_musio_playlist {"playlistId": "default", "songId": string, "songTitle": string, "artist": string, "songIndex": number}：把歌曲收藏到本地 Musio 默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。
+                已注册 Musio 能力：
+                %s
 
                 输出格式：
                 {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
 
                 规则：
+                - toolCalls 只表达本轮权限、目标或写入意图提示，可以为空，不是执行顺序；真正下一步工具选择由 AgentStepLoop 基于 observation 决定。
+                - recommend_songs 是 StepLoop 内部推荐能力，Turn Planner 不要输出它；开放推荐只需要 disposition=use_tools、taskType=recommend、toolCalls=[]。
                 - 普通寒暄、感谢、确认、情绪表达且不需要音乐能力时，输出 disposition=respond_only、taskType=chat、toolCalls=[]。
                 - 当前用户输入优先级最高；任务记忆只用于恢复搜索目标、上一轮结果和排除项，不用于默认继承旧数量。
-                - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放前发现歌曲等音乐相关请求，应输出 disposition=use_tools 并规划只读工具。
-                - 开放推荐、场景推荐、风格推荐应使用 recommend_songs，taskType=recommend；不要把场景、用途、时段或心境描述直接当 search_songs.keyword 搜索。
+                - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放前发现歌曲等音乐相关请求，应输出 disposition=use_tools。
+                - 开放推荐、场景推荐、风格推荐应输出 taskType=recommend，toolCalls 可以为空；由 StepLoop 在可用能力内决定是否搜索歌曲、读取画像或继续补充证据。
                 - 精确搜歌、歌手搜索、替换已有候选、播放前查找候选时使用 search_songs，taskType=search。
-                - taskType 必须描述本轮主能力：如果主要工具是 search_songs 且目标是查找/替换候选歌曲，使用 taskType=search；如果主要工具是 recommend_songs，使用 taskType=recommend。
+                - taskType 必须描述本轮主能力：查找/替换候选歌曲使用 search；开放推荐、场景推荐、风格推荐使用 recommend。
                 - 如果用户在纠正上一轮音乐搜索目标，例如说明刚才的歌手、歌名或关键词说错了，使用 contextMode=correction，并基于纠正后的正向目标规划 search_songs。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 5。
-                - recommend_songs.arguments.count 必须显式填写。根据当前用户输入和 effectiveRequest 的推荐数量填写；完全没有数量含义时默认 5。
-                - 用户说“一首/1首/一个/一支/一曲”时，search_songs.limit 或 recommend_songs.count 必须填 1，不能使用默认 5。
+                - 用户说“一首/1首/一个/一支/一曲”时，如果 toolCalls 中包含 search_songs，limit 必须填 1，不能使用默认 5。
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
-                - 用户说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 add_song_to_musio_playlist 只表示待确认写入意图；后端必须等用户下一轮确认后才真正写入。
+                - 用户本轮明确说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 add_song_to_musio_playlist 只表示本轮存在本地写入意图；是否执行由 PolicyGate 和 AgentStepLoop 决定。
                 - 如果用户要收藏“刚才那首/第一首/第二首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；能确定序号时填写 songIndex，能确定 songId 时填写 songId。
                 - 如果用户明确给出歌名或歌手但没有 songId，add_song_to_musio_playlist 填 songTitle/artist；后端会先解析或搜索真实歌曲。
                 - add_song_to_musio_playlist 是本地 Musio 歌单写入，不是只读工具；不要声称它已经执行成功，除非当前用户输入是明确确认语句。
-                - 当前只读工具可以直接 use_tools；本地 Musio 歌单写入必须等待用户确认。
+                - 当前只读工具可以直接 use_tools；QQ 音乐账号收藏、账号歌单写入、公开评论等账号级写入能力当前没有开放工具，应输出 request_confirmation 或 unsupported。
                 - 不需要工具时不要为了展示能力而调用工具。
                 - 不要输出 chain-of-thought。
-                """;
+                """.formatted(turnPlannerManifest().plannerToolList());
+    }
+
+    private Set<String> allowedPlannerTools() {
+        return Set.copyOf(turnPlannerManifest().names());
+    }
+
+    private AgentCapabilityManifest turnPlannerManifest() {
+        return new AgentCapabilityManifest(capabilityRegistry.manifest(true).capabilities().stream()
+                .filter(capability -> !STEP_LOOP_ONLY_TOOLS.contains(capability.name()))
+                .toList());
     }
 
     private void logPlanSummary(String stage, MusioConfig.Ai ai, AgentTurnPlan plan, String source) {
@@ -477,20 +431,6 @@ public class AgentTurnPlanner {
         return value.isTextual() ? value.asText().strip() : "";
     }
 
-    private String text(Map<String, Object> arguments, String key) {
-        Object value = arguments.get(key);
-        return value instanceof String text ? text.strip() : "";
-    }
-
-    private boolean hasText(Map<String, Object> arguments, String key) {
-        Object value = arguments.get(key);
-        return value instanceof String text && !text.isBlank();
-    }
-
-    private boolean hasInteger(Map<String, Object> arguments, String key) {
-        return arguments.get(key) instanceof Number;
-    }
-
     private List<String> textArray(JsonNode node) {
         if (!node.isArray()) {
             return List.of();
@@ -502,51 +442,6 @@ public class AgentTurnPlanner {
             }
         }
         return values.stream()
-                .distinct()
-                .limit(20)
-                .toList();
-    }
-
-    private int cleanLimit(Object value, int defaultValue, int min, int max) {
-        int actual = defaultValue;
-        if (value instanceof Number number) {
-            actual = number.intValue();
-        } else if (value instanceof String text && !text.isBlank()) {
-            try {
-                actual = Integer.parseInt(text.strip());
-            } catch (NumberFormatException ignored) {
-                actual = defaultValue;
-            }
-        }
-        return Math.max(min, Math.min(max, actual));
-    }
-
-    private Integer cleanRequiredLimit(Object value, int min, int max) {
-        Integer actual = null;
-        if (value instanceof Number number) {
-            actual = number.intValue();
-        } else if (value instanceof String text && !text.isBlank()) {
-            try {
-                actual = Integer.parseInt(text.strip());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        if (actual == null) {
-            return null;
-        }
-        return Math.max(min, Math.min(max, actual));
-    }
-
-    private List<String> stringList(Object value) {
-        if (!(value instanceof List<?> list)) {
-            return List.of();
-        }
-        return list.stream()
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .filter(item -> !item.isBlank())
-                .map(String::strip)
                 .distinct()
                 .limit(20)
                 .toList();

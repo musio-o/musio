@@ -1,8 +1,18 @@
 package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.capability.AgentCapability;
+import com.musio.agent.capability.AgentCapabilityArgumentContext;
+import com.musio.agent.capability.AgentCapabilityHandler;
 import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.AgentCapabilityValidationResult;
+import com.musio.agent.capability.CapabilityEffect;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -47,6 +57,25 @@ class AgentStepPlannerTest {
     }
 
     @Test
+    void parsesRecommendToolCallAndClampsCountToRequestedSongCount() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "recommend_songs",
+                  "arguments": {"request": "推荐适合深夜学习和写代码听的歌", "count": 8},
+                  "publicActivity": "生成推荐候选并精确匹配歌曲",
+                  "confidence": 0.91,
+                  "reason": "开放场景推荐应先生成具体候选"
+                }
+                """, new AgentCapabilityRegistry().readManifest(), 5).orElseThrow();
+
+        assertEquals(AgentStepActionType.TOOL_CALL, action.action());
+        assertEquals(AgentCapabilityRegistry.RECOMMEND_SONGS, action.toolName());
+        assertEquals("推荐适合深夜学习和写代码听的歌", action.arguments().get("request"));
+        assertEquals(5, action.arguments().get("count"));
+    }
+
+    @Test
     void parsesCommentToolCallWithDefaultLimit() {
         AgentStepAction action = planner.parseAction("""
                 {
@@ -63,6 +92,27 @@ class AgentStepPlannerTest {
         assertEquals("get_hot_comments", action.toolName());
         assertEquals("qqmusic:1", action.arguments().get("songId"));
         assertEquals(10, action.arguments().get("limit"));
+    }
+
+    @Test
+    void parsesToolCallUsingCapabilityProvidedArgumentRules() {
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(new DemoCapabilityHandler()));
+        AgentStepPlanner customPlanner = new AgentStepPlanner(null, new ObjectMapper(), registry);
+
+        AgentStepAction action = customPlanner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "demo_capability",
+                  "arguments": {"raw": "  normalized value  "},
+                  "publicActivity": "执行测试能力",
+                  "confidence": 0.91,
+                  "reason": "测试 capability 参数规则"
+                }
+                """, registry.readManifest()).orElseThrow();
+
+        assertEquals(AgentStepActionType.TOOL_CALL, action.action());
+        assertEquals("demo_capability", action.toolName());
+        assertEquals("normalized value", action.arguments().get("value"));
     }
 
     @Test
@@ -122,5 +172,52 @@ class AgentStepPlannerTest {
                   "confidence": 0.92
                 }
                 """).isEmpty());
+    }
+
+    private static class DemoCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "demo_capability",
+                CapabilityEffect.READ,
+                "测试 capability handler 参数规范化。",
+                "{\"raw\": string}",
+                Set.of("value")
+        );
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public Map<String, Object> normalizeArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            Object raw = arguments == null ? null : arguments.get("raw");
+            return raw instanceof String value ? Map.of("value", value.strip()) : Map.of();
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            Object value = arguments == null ? null : arguments.get("value");
+            return value instanceof String text && !text.isBlank()
+                    ? AgentCapabilityValidationResult.accepted()
+                    : AgentCapabilityValidationResult.rejected("missing_required_argument");
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            return Optional.empty();
+        }
     }
 }

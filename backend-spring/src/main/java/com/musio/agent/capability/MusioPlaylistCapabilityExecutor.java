@@ -146,6 +146,9 @@ public class MusioPlaylistCapabilityExecutor {
         if (memory != null) {
             addSongCandidate(songsById, memory.lastTargetSong());
         }
+        if (memory != null && memory.pendingLocalPlaylistAdd() != null) {
+            addSongCandidate(songsById, memory.pendingLocalPlaylistAdd().song());
+        }
         return List.copyOf(songsById.values());
     }
 

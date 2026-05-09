@@ -1,6 +1,8 @@
 package com.musio.agent;
 
+import com.musio.agent.capability.MusicReadCapabilityHandler;
 import com.musio.tools.MusicReadTools;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -10,10 +12,15 @@ import java.util.Optional;
 
 @Component
 public class AgentToolExecutor {
-    private final MusicReadTools musicReadTools;
+    private final MusicReadCapabilityHandler readCapabilities;
+
+    @Autowired
+    public AgentToolExecutor(MusicReadCapabilityHandler readCapabilities) {
+        this.readCapabilities = readCapabilities;
+    }
 
     public AgentToolExecutor(MusicReadTools musicReadTools) {
-        this.musicReadTools = musicReadTools;
+        this(new MusicReadCapabilityHandler(musicReadTools));
     }
 
     public List<AgentToolExecution> execute(AgentToolPlan plan) {
@@ -28,8 +35,11 @@ public class AgentToolExecutor {
     }
 
     public Optional<String> executeTool(String toolName, Map<String, Object> arguments) {
-        return execute(new AgentToolCall(toolName, arguments))
-                .map(AgentToolExecution::resultJson);
+        return readCapabilities.execute(null, toolName, arguments);
+    }
+
+    public boolean supports(String toolName) {
+        return readCapabilities.supports(toolName);
     }
 
     private Optional<AgentToolExecution> execute(AgentToolCall call) {
@@ -37,59 +47,7 @@ public class AgentToolExecutor {
             return Optional.empty();
         }
         Map<String, Object> arguments = call.arguments() == null ? Map.of() : call.arguments();
-        String result = switch (call.toolName()) {
-            case "search_songs" -> searchSongs(arguments);
-            case "get_user_music_profile" -> musicReadTools.getUserMusicProfile();
-            case "get_song_detail" -> musicReadTools.getSongDetail(text(arguments, "songId"));
-            case "get_lyrics" -> musicReadTools.getLyrics(text(arguments, "songId"));
-            case "get_hot_comments" -> musicReadTools.getHotComments(text(arguments, "songId"), integer(arguments, "limit"));
-            case "get_user_playlists" -> musicReadTools.getUserPlaylists(integer(arguments, "limit"));
-            case "get_playlist_songs" -> musicReadTools.getPlaylistSongs(text(arguments, "playlistId"), integer(arguments, "limit"));
-            default -> null;
-        };
-        if (result == null) {
-            return Optional.empty();
-        }
-        return Optional.of(new AgentToolExecution(call.toolName(), arguments, result));
-    }
-
-    private String searchSongs(Map<String, Object> arguments) {
-        List<String> excludedTitles = stringList(arguments.get("excludedTitles"));
-        if (!excludedTitles.isEmpty()) {
-            return musicReadTools.searchSongsExcludingTitles(text(arguments, "keyword"), integer(arguments, "limit"), excludedTitles);
-        }
-        return musicReadTools.searchSongs(text(arguments, "keyword"), integer(arguments, "limit"));
-    }
-
-    private String text(Map<String, Object> arguments, String key) {
-        Object value = arguments.get(key);
-        return value instanceof String text ? text.strip() : "";
-    }
-
-    private Integer integer(Map<String, Object> arguments, String key) {
-        Object value = arguments.get(key);
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        if (value instanceof String text && !text.isBlank()) {
-            try {
-                return Integer.parseInt(text.strip());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
-    private List<String> stringList(Object value) {
-        if (!(value instanceof List<?> list)) {
-            return List.of();
-        }
-        return list.stream()
-                .filter(String.class::isInstance)
-                .map(String.class::cast)
-                .filter(item -> !item.isBlank())
-                .map(String::strip)
-                .toList();
+        return executeTool(call.toolName(), arguments)
+                .map(result -> new AgentToolExecution(call.toolName(), arguments, result));
     }
 }

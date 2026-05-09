@@ -72,6 +72,17 @@ public class AgentObservationBuilder {
             String summary = root.path("summary").asText("");
             return summary.isBlank() ? toolName + " 成功，已写入 Musio 本地歌单" : summary;
         }
+        if ("recommend_songs".equals(toolName)) {
+            JsonNode unresolved = root.path("unresolved");
+            String suffix = unresolved.isArray() && !unresolved.isEmpty()
+                    ? "，未精确匹配 " + unresolved.size() + " 首"
+                    : "";
+            if (!songs.isEmpty()) {
+                return toolName + " 成功，已生成并精确匹配 " + songs.size() + " 首推荐歌曲：" + songRefs(songs) + suffix;
+            }
+            String summary = root.path("summary").asText("");
+            return summary.isBlank() ? toolName + " 未匹配到可用歌曲" : summary;
+        }
         if (!songs.isEmpty()) {
             return toolName + " 成功，歌曲 " + songs.size() + " 首：" + songRefs(songs);
         }
