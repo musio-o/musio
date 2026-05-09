@@ -15,8 +15,8 @@ public class MusioPlaylistCapabilityHandler implements AgentCapabilityHandler {
     private static final AgentCapability ADD_SONG = new AgentCapability(
             AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
             CapabilityEffect.LOCAL_WRITE,
-            "把歌曲收藏到本地 Musio 默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。",
-            "{\"playlistId\": string, \"songId\": string, \"songTitle\": string, \"artist\": string, \"songIndex\": number}",
+            "把一首或多首歌曲收藏到本地 Musio 默认歌单；这是 Musio 本地歌单写入，不是 QQ 音乐账号收藏。",
+            "{\"playlistId\": string, \"songId\": string, \"songIds\": string[], \"songTitle\": string, \"artist\": string, \"songIndex\": number, \"songIndexes\": number[]}",
             Set.of()
     );
 

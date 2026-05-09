@@ -174,7 +174,7 @@ public class AgentLoopRunner {
         if (state.requestedSongCount() == 1
                 && state.capabilityManifest().allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
                 && successfulToolObserved(state, "get_hot_comments")
-                && successfulToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)) {
+                && successfulLocalPlaylistWriteObserved(state)) {
             return true;
         }
         return false;
@@ -208,10 +208,10 @@ public class AgentLoopRunner {
             case DETAIL -> successfulToolObserved(state, "get_song_detail");
             case PLAYLIST -> successfulToolObserved(state, "get_user_playlists")
                     || successfulToolObserved(state, "get_playlist_songs")
-                    || successfulToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST);
+                    || successfulLocalPlaylistWriteObserved(state);
             case PROFILE -> successfulToolObserved(state, "get_user_music_profile");
             case PLAYBACK -> false;
-            case LOCAL_PLAYLIST_WRITE -> successfulToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST);
+            case LOCAL_PLAYLIST_WRITE -> successfulLocalPlaylistWriteObserved(state);
             case ACCOUNT_WRITE -> false;
         };
     }
@@ -241,6 +241,44 @@ public class AgentLoopRunner {
     private boolean successfulToolObserved(AgentLoopState state, String toolName) {
         return state.observations().stream()
                 .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS && toolName.equals(observation.toolName()));
+    }
+
+    private boolean successfulLocalPlaylistWriteObserved(AgentLoopState state) {
+        if (state == null || state.observations() == null) {
+            return false;
+        }
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(observation.toolName())) {
+                continue;
+            }
+            if (localPlaylistWriteComplete(observation)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean localPlaylistWriteComplete(AgentObservation observation) {
+        if (observation == null || observation.resultJson() == null || observation.resultJson().isBlank()) {
+            return true;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(observation.resultJson());
+            if (!root.path("success").asBoolean(false)) {
+                return false;
+            }
+            int requested = root.path("requestedCount").isNumber()
+                    ? root.path("requestedCount").asInt()
+                    : root.hasNonNull("songId") ? 1 : 0;
+            int resolved = root.path("count").isNumber()
+                    ? root.path("count").asInt()
+                    : root.hasNonNull("songId") ? 1 : 0;
+            int unresolved = root.path("unresolvedCount").asInt(0);
+            return requested <= 0 || (resolved >= requested && unresolved <= 0);
+        } catch (Exception ignored) {
+            return true;
+        }
     }
 
     private boolean recommendationCallStillNeedsWork(AgentLoopState state, AgentStepAction action) {

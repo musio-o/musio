@@ -90,8 +90,25 @@ final class AgentCapabilityArgumentRules {
             cleaned.put("songId", text(cleaned, "songId"));
             cleaned.put("songTitle", text(cleaned, "songTitle"));
             cleaned.put("artist", text(cleaned, "artist"));
+            List<String> songIds = stringList(cleaned.get("songIds"));
+            if (songIds.isEmpty()) {
+                cleaned.remove("songIds");
+            } else {
+                cleaned.put("songIds", songIds.stream().limit(20).toList());
+                if (text(cleaned, "songId").isBlank()) {
+                    cleaned.put("songId", songIds.getFirst());
+                }
+            }
+            List<Integer> songIndexes = integerList(cleaned.get("songIndexes"), 1, safeContext.songIndexMax());
+            if (songIndexes.isEmpty()) {
+                cleaned.remove("songIndexes");
+            } else {
+                cleaned.put("songIndexes", songIndexes.stream().limit(20).toList());
+            }
             Integer songIndex = cleanRequiredLimit(cleaned.get("songIndex"), 1, safeContext.songIndexMax());
-            if (songIndex == null) {
+            if (songIndex == null && !songIndexes.isEmpty()) {
+                cleaned.put("songIndex", songIndexes.getFirst());
+            } else if (songIndex == null) {
                 cleaned.remove("songIndex");
             } else {
                 cleaned.put("songIndex", songIndex);
@@ -138,7 +155,11 @@ final class AgentCapabilityArgumentRules {
     }
 
     static AgentCapabilityValidationResult validateMusioPlaylistRequiredArguments(Map<String, Object> arguments) {
-        if (hasText(arguments, "songId") || hasText(arguments, "songTitle") || integer(arguments, "songIndex") != null) {
+        if (hasText(arguments, "songId")
+                || !stringList(arguments == null ? null : arguments.get("songIds")).isEmpty()
+                || hasText(arguments, "songTitle")
+                || integer(arguments, "songIndex") != null
+                || !integerList(arguments == null ? null : arguments.get("songIndexes"), 1, 100).isEmpty()) {
             return AgentCapabilityValidationResult.accepted();
         }
         return AgentCapabilityValidationResult.rejected("missing_song_reference");
@@ -178,6 +199,18 @@ final class AgentCapabilityArgumentRules {
                 .toList();
     }
 
+    static List<Integer> integerList(Object value, int min, int max) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream()
+                .map(AgentCapabilityArgumentRules::integerValue)
+                .filter(number -> number != null && number >= min && number <= max)
+                .distinct()
+                .limit(20)
+                .toList();
+    }
+
     private static boolean hasText(Map<String, Object> arguments, String key) {
         return !text(arguments, key).isBlank();
     }
@@ -197,19 +230,24 @@ final class AgentCapabilityArgumentRules {
     }
 
     private static Integer cleanRequiredLimit(Object value, int min, int max) {
-        Integer actual = null;
-        if (value instanceof Number number) {
-            actual = number.intValue();
-        } else if (value instanceof String text && !text.isBlank()) {
-            try {
-                actual = Integer.parseInt(text.strip());
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
+        Integer actual = integerValue(value);
         if (actual == null) {
             return null;
         }
         return Math.max(min, Math.min(max, actual));
+    }
+
+    private static Integer integerValue(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.strip());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 }

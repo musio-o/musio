@@ -122,6 +122,26 @@ class AgentObservationBuilderTest {
     }
 
     @Test
+    void buildsBatchLocalPlaylistObservationWithSongs() {
+        AgentObservation observation = builder.build("step-1", "add_song_to_musio_playlist", Map.of("songIds", java.util.List.of("qqmusic:1", "qqmusic:2")), """
+                {
+                  "success": true,
+                  "summary": "已帮你收藏到 Musio 歌单 2 首：素颜 - 许嵩 / 何曼婷；西厢 - 后弦。",
+                  "requestedCount": 2,
+                  "count": 2,
+                  "songs": [
+                    {"id": "qqmusic:1", "provider": "QQMUSIC", "title": "素颜", "artists": ["许嵩", "何曼婷"], "album": "素颜", "durationSeconds": 238, "artworkUrl": null},
+                    {"id": "qqmusic:2", "provider": "QQMUSIC", "title": "西厢", "artists": ["后弦"], "album": "古·玩", "durationSeconds": 263, "artworkUrl": null}
+                  ]
+                }
+                """);
+
+        assertEquals(AgentObservationStatus.SUCCESS, observation.status());
+        assertEquals(2, observation.songs().size());
+        assertTrue(observation.plannerSummary().contains("Musio 歌单 2 首"));
+    }
+
+    @Test
     void buildsFailureObservation() {
         AgentObservation observation = builder.build("step-1", "get_hot_comments", Map.of(), """
                 {"success": false, "message": "missing songId"}

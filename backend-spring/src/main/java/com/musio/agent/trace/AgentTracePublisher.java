@@ -220,7 +220,10 @@ public class AgentTracePublisher {
         copyIfPresent(input, preview, "keyword");
         copyIfPresent(input, preview, "limit");
         copyIfPresent(input, preview, "songId");
+        copyIfPresent(input, preview, "songIds");
         copyIfPresent(input, preview, "playlistId");
+        copyIfPresent(input, preview, "songIndex");
+        copyIfPresent(input, preview, "songIndexes");
         return preview;
     }
 
@@ -239,6 +242,9 @@ public class AgentTracePublisher {
         Object value = source.get(key);
         if (value instanceof String || value instanceof Number || value instanceof Boolean) {
             target.put(key, value);
+        } else if (value instanceof java.util.List<?> list
+                && list.stream().allMatch(item -> item instanceof String || item instanceof Number || item instanceof Boolean)) {
+            target.put(key, list);
         }
     }
 
@@ -258,6 +264,10 @@ public class AgentTracePublisher {
 
     private String doneSummary(String toolName, Map<String, Object> result) {
         if ("add_song_to_musio_playlist".equals(toolName)) {
+            Object count = result.get("count");
+            if (count instanceof Number number && number.intValue() > 1) {
+                return "已收藏到 Musio 歌单 " + number.intValue() + " 首。";
+            }
             Object title = result.get("songTitle");
             return title instanceof String text && !text.isBlank()
                     ? "已收藏到 Musio 歌单：" + text + "。"

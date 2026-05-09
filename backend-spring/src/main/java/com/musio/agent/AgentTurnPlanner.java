@@ -333,7 +333,7 @@ public class AgentTurnPlanner {
                 - 不要编造 songId、playlistId 或用户没有提供且任务记忆中没有的标识符。
                 - 歌曲评论、歌词、详情类任务如果没有目标 songId，需要先 search_songs 找候选；如果有目标 songId，优先直接调用对应工具。
                 - 用户本轮明确说“收藏/保存/加入 Musio 歌单/帮我收藏某首歌/加入歌单”时，规划 add_song_to_musio_playlist 只表示本轮存在本地写入意图；是否执行由 PolicyGate 和 AgentStepLoop 决定。
-                - 如果用户要收藏“刚才那首/第一首/第二首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；能确定序号时填写 songIndex，能确定 songId 时填写 songId。
+                - 如果用户要收藏“刚才那首/第一首/第二首/这几首”等上一轮卡片歌曲，memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs；多首优先填写 songIds，只有没有 songId 但能确定序号时才填写 songIndexes；单首可填写 songId 或 songIndex。
                 - 如果用户明确给出歌名或歌手但没有 songId，add_song_to_musio_playlist 填 songTitle/artist；后端会先解析或搜索真实歌曲。
                 - add_song_to_musio_playlist 是本地 Musio 歌单写入，不是只读工具；不要声称它已经执行成功，除非当前用户输入是明确确认语句。
                 - 当前只读工具可以直接 use_tools；QQ 音乐账号收藏、账号歌单写入、公开评论等账号级写入能力当前没有开放工具，应输出 request_confirmation 或 unsupported。

@@ -216,9 +216,10 @@ public class AgentStepPlanner {
                 - get_hot_comments.limit 默认 10，最大 30。
                 - 如果用户说“最热门的评论/一条评论/一条热评”，get_hot_comments.limit 应填写 1。
                 - add_song_to_musio_playlist 只有在用户本轮明确要求收藏/保存/加入 Musio 歌单或已经确认收藏、且出现在“本轮可用能力”时才允许调用；它只写入本地 Musio 歌单，不代表 QQ 音乐账号收藏。
-                - add_song_to_musio_playlist 如果已经能确定 songId，不要再同时填写可能冲突的 songIndex；songIndex 只用于“第一首/第二首”这种没有明确 songId 的引用。
+                - 如果用户要把多首已推荐/已搜索歌曲加入 Musio 歌单，优先用 add_song_to_musio_playlist.songIds 一次传入多个 songId；没有 songId 但有明确序号时才用 songIndexes。
+                - add_song_to_musio_playlist 如果已经能确定 songId/songIds，不要再同时填写可能冲突的 songIndex/songIndexes；序号只用于“第一首/第二首/这几首”这种没有明确 songId 的引用。
                 - 如果用户要求写入 QQ 音乐账号、公开评论、账号收藏等 account_write 能力，但本轮可用能力没有对应工具，应输出 request_confirmation 或 unsupported，不要改用本地 Musio 写入冒充账号写入。
-                - add_song_to_musio_playlist 至少应提供 songId、songIndex、songTitle 三者之一；playlistId 缺省为 default。
+                - add_song_to_musio_playlist 至少应提供 songId、songIds、songIndex、songIndexes、songTitle 之一；playlistId 缺省为 default。
                 - 不要输出 chain-of-thought。
                 """.formatted(manifest.plannerToolList());
     }

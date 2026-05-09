@@ -181,6 +181,25 @@ class AgentStepPlannerTest {
     }
 
     @Test
+    void parsesBatchLocalPlaylistWriteWhenManifestAllowsIt() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "add_song_to_musio_playlist",
+                  "arguments": {"playlistId": "default", "songIds": ["qqmusic:1", "qqmusic:2"]},
+                  "publicActivity": "收藏这些歌",
+                  "confidence": 0.92,
+                  "reason": "用户明确要求批量收藏"
+                }
+                """, new AgentCapabilityRegistry().manifest(true)).orElseThrow();
+
+        assertEquals(AgentStepActionType.TOOL_CALL, action.action());
+        assertEquals("add_song_to_musio_playlist", action.toolName());
+        assertEquals(java.util.List.of("qqmusic:1", "qqmusic:2"), action.arguments().get("songIds"));
+        assertEquals("qqmusic:1", action.arguments().get("songId"));
+    }
+
+    @Test
     void dropsLocalPlaylistWriteWhenManifestDoesNotAllowIt() {
         assertTrue(planner.parseAction("""
                 {
