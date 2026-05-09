@@ -22,6 +22,7 @@ _WINDOWS_DRIVE_PATTERN = re.compile(r"^([A-Za-z]):[\\/](.*)$")
 _MUSIC_GENE_LIKED_SONG_LIMIT = 80
 _MUSIC_GENE_LIST_LIMIT = 30
 _MUSIC_GENE_SIGNAL_LIMIT = 50
+_HOT_COMMENT_PAGE_SIZE = 15
 
 
 class QQMusicClient:
@@ -73,7 +74,7 @@ class QQMusicClient:
     async def comments(self, song_id: str) -> list[Comment]:
         async with self._client() as client:
             track = await self._resolve_song(client, song_id)
-            result = await client.comment.get_hot_comments(track.id, page_size=50)
+            result = await client.comment.get_hot_comments(track.id, page_size=_HOT_COMMENT_PAGE_SIZE)
             comments = [
                 Comment(
                     id=item.cmid,
