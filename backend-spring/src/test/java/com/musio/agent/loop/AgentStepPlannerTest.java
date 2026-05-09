@@ -95,6 +95,24 @@ class AgentStepPlannerTest {
     }
 
     @Test
+    void parsesBatchCommentToolCallWithSongIds() {
+        AgentStepAction action = planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "get_hot_comments",
+                  "arguments": {"songIds": ["qqmusic:1", "qqmusic:2"], "limit": 1},
+                  "publicActivity": "读取多首歌的热门评论",
+                  "confidence": 0.93,
+                  "reason": "用户要多首歌的热评"
+                }
+                """).orElseThrow();
+
+        assertEquals("get_hot_comments", action.toolName());
+        assertEquals(java.util.List.of("qqmusic:1", "qqmusic:2"), action.arguments().get("songIds"));
+        assertEquals(1, action.arguments().get("limit"));
+    }
+
+    @Test
     void parsesToolCallUsingCapabilityProvidedArgumentRules() {
         AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(new DemoCapabilityHandler()));
         AgentStepPlanner customPlanner = new AgentStepPlanner(null, new ObjectMapper(), registry);

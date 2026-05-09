@@ -89,6 +89,39 @@ class AgentObservationBuilderTest {
     }
 
     @Test
+    void buildsBatchLyricsAndCommentsSummaries() {
+        AgentObservation lyrics = builder.build("step-1", "get_lyrics", Map.of("songIds", java.util.List.of("qqmusic:1", "qqmusic:2")), """
+                {
+                  "success": true,
+                  "requestedCount": 2,
+                  "count": 2,
+                  "lyricsResults": [
+                    {"songId": "qqmusic:1", "success": true, "lyrics": {"songId": "qqmusic:1", "provider": "QQMUSIC", "plainText": "A", "syncedText": null}},
+                    {"songId": "qqmusic:2", "success": true, "lyrics": {"songId": "qqmusic:2", "provider": "QQMUSIC", "plainText": "B", "syncedText": null}}
+                  ]
+                }
+                """);
+        AgentObservation comments = builder.build("step-2", "get_hot_comments", Map.of("songIds", java.util.List.of("qqmusic:1", "qqmusic:2")), """
+                {
+                  "success": true,
+                  "requestedCount": 2,
+                  "count": 2,
+                  "commentResults": [
+                    {"songId": "qqmusic:1", "success": true, "count": 1, "comments": [{"id": "c1", "songId": "qqmusic:1", "provider": "QQMUSIC", "authorName": "A", "text": "a", "likedCount": 1, "createdAt": "1970-01-01T00:00:00Z"}]},
+                    {"songId": "qqmusic:2", "success": true, "count": 1, "comments": [{"id": "c2", "songId": "qqmusic:2", "provider": "QQMUSIC", "authorName": "B", "text": "b", "likedCount": 1, "createdAt": "1970-01-01T00:00:00Z"}]}
+                  ],
+                  "comments": [
+                    {"id": "c1", "songId": "qqmusic:1", "provider": "QQMUSIC", "authorName": "A", "text": "a", "likedCount": 1, "createdAt": "1970-01-01T00:00:00Z"},
+                    {"id": "c2", "songId": "qqmusic:2", "provider": "QQMUSIC", "authorName": "B", "text": "b", "likedCount": 1, "createdAt": "1970-01-01T00:00:00Z"}
+                  ]
+                }
+                """);
+
+        assertEquals("get_lyrics 成功，已读取歌词 2/2 首", lyrics.plannerSummary());
+        assertEquals("get_hot_comments 成功，歌曲 2 首，评论 2 条", comments.plannerSummary());
+    }
+
+    @Test
     void buildsFailureObservation() {
         AgentObservation observation = builder.build("step-1", "get_hot_comments", Map.of(), """
                 {"success": false, "message": "missing songId"}

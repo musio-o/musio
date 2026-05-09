@@ -150,7 +150,8 @@ public class AgentToolPlanner {
 
     private boolean requiredArgumentsPresent(String toolName, Map<String, Object> arguments) {
         return switch (toolName) {
-            case "get_song_detail", "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId");
+            case "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId") || hasTextList(arguments, "songIds");
+            case "get_song_detail" -> hasText(arguments, "songId");
             case "get_playlist_songs" -> hasText(arguments, "playlistId");
             case "search_songs" -> hasText(arguments, "keyword");
             default -> true;
@@ -162,6 +163,14 @@ public class AgentToolPlanner {
         return value instanceof String text && !text.isBlank();
     }
 
+    private boolean hasTextList(Map<String, Object> arguments, String key) {
+        Object value = arguments.get(key);
+        if (!(value instanceof List<?> list)) {
+            return false;
+        }
+        return list.stream().anyMatch(item -> item instanceof String text && !text.isBlank());
+    }
+
     private String plannerInstruction() {
         return """
                 你是 Musio 的工具规划器。只输出 JSON 对象，不要 markdown，不要解释。
@@ -171,8 +180,8 @@ public class AgentToolPlanner {
                 - search_songs {"keyword": string, "limit": number, "excludedTitles": string[]}：搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。
                 - get_user_music_profile {}：读取本地音乐画像摘要。
                 - get_song_detail {"songId": string}：读取歌曲详情。
-                - get_lyrics {"songId": string}：读取歌词。
-                - get_hot_comments {"songId": string, "limit": number}：读取热门评论。
+                - get_lyrics {"songId": string, "songIds": string[]}：读取一首或多首歌曲的歌词。
+                - get_hot_comments {"songId": string, "songIds": string[], "limit": number}：读取一首或多首歌曲的热门评论。
                 - get_user_playlists {"limit": number}：读取用户歌单。
                 - get_playlist_songs {"playlistId": string, "limit": number}：读取歌单歌曲。
 
@@ -192,6 +201,7 @@ public class AgentToolPlanner {
                 - 歌曲评论、感人评论、听众感受类问题通常需要 get_hot_comments。
                 - 歌曲背景、详情、专辑、时长、歌手信息类问题通常需要 get_song_detail。
                 - 歌词含义、歌词片段、逐句解读类问题通常需要 get_lyrics。
+                - 多首歌都需要评论或歌词时，优先使用 songIds 一次传入多个歌曲 ID，不要拆成多次 get_hot_comments / get_lyrics。
                 - 最多输出 12 个工具调用。
                 - 不要输出 chain-of-thought。
                 """;

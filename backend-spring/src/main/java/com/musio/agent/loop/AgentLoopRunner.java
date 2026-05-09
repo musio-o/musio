@@ -168,6 +168,9 @@ public class AgentLoopRunner {
         if (pureRecommendationSatisfied(state, action)) {
             return true;
         }
+        if (requiredOutcomesSatisfied(state)) {
+            return true;
+        }
         if (state.requestedSongCount() == 1
                 && state.capabilityManifest().allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
                 && successfulToolObserved(state, "get_hot_comments")
@@ -175,6 +178,42 @@ public class AgentLoopRunner {
             return true;
         }
         return false;
+    }
+
+    private boolean requiredOutcomesSatisfied(AgentLoopState state) {
+        if (state == null || state.goal() == null || state.goal().requiredOutcomes().isEmpty()) {
+            return false;
+        }
+        for (AgentRequiredOutcome outcome : state.goal().requiredOutcomes()) {
+            if (!requiredOutcomeSatisfied(state, outcome)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean requiredOutcomeSatisfied(AgentLoopState state, AgentRequiredOutcome outcome) {
+        return switch (outcome) {
+            case RECOMMENDATION -> recommendationSatisfied(state, new AgentStepAction(
+                    AgentStepActionType.TOOL_CALL,
+                    AgentCapabilityRegistry.RECOMMEND_SONGS,
+                    Map.of(),
+                    "",
+                    1.0,
+                    "outcome_verification"
+            ));
+            case SEARCH -> successfulToolObserved(state, "search_songs");
+            case COMMENTS -> successfulToolObserved(state, "get_hot_comments");
+            case LYRICS -> successfulToolObserved(state, "get_lyrics");
+            case DETAIL -> successfulToolObserved(state, "get_song_detail");
+            case PLAYLIST -> successfulToolObserved(state, "get_user_playlists")
+                    || successfulToolObserved(state, "get_playlist_songs")
+                    || successfulToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST);
+            case PROFILE -> successfulToolObserved(state, "get_user_music_profile");
+            case PLAYBACK -> false;
+            case LOCAL_PLAYLIST_WRITE -> successfulToolObserved(state, AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST);
+            case ACCOUNT_WRITE -> false;
+        };
     }
 
     private boolean pureRecommendationSatisfied(AgentLoopState state, AgentStepAction action) {

@@ -11,7 +11,9 @@ import com.musio.agent.capability.AgentCapabilityHandler;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.CapabilityEffect;
+import com.musio.agent.capability.MusicReadCapabilityHandler;
 import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
+import com.musio.agent.capability.MusioPlaylistCapabilityHandler;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.events.AgentEventBus;
@@ -408,6 +410,44 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void rejectsSingleCommentReadAlreadyCoveredByBatchObservation() {
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_hot_comments", Map.of("songId", "qqmusic:0", "limit", 1), "重复读评论", 0.9, "已被批量读取"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+        AgentObservation batchComments = new AgentObservation(
+                "loop.step.1",
+                "get_hot_comments",
+                Map.of("songIds", List.of("qqmusic:0", "qqmusic:1"), "limit", 1),
+                AgentObservationStatus.SUCCESS,
+                """
+                        {"success":true,"requestedCount":2,"count":1,"commentResults":[{"songId":"qqmusic:0","success":true,"count":1,"comments":[{"id":"comment:1","songId":"qqmusic:0","provider":"QQMUSIC","authorName":"Cheer","text":"虽然叫晴天，但整个故事都在下雨、","likedCount":251122,"createdAt":"1970-01-01T00:00:00Z"}]},{"songId":"qqmusic:1","success":true,"count":0,"comments":[]}],"comments":[{"id":"comment:1","songId":"qqmusic:0","provider":"QQMUSIC","authorName":"Cheer","text":"虽然叫晴天，但整个故事都在下雨、","likedCount":251122,"createdAt":"1970-01-01T00:00:00Z"}]}
+                        """,
+                "get_hot_comments 成功，歌曲 2 首，评论 1 条",
+                List.of()
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "再读评论",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(batchComments),
+                1
+        ));
+
+        assertEquals(2, evidence.observations().size());
+        assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().get(1).status());
+        assertTrue(evidence.observations().get(1).resultJson().contains("tool_result_already_observed"));
+    }
+
+    @Test
     void rejectsLocalPlaylistWriteWhenManifestDoesNotAllowIt() {
         AgentLoopRunner runner = new AgentLoopRunner(
                 new SequencedPlanner(List.of(
@@ -690,6 +730,63 @@ class AgentLoopRunnerTest {
         assertEquals(3, evidence.songs().size());
     }
 
+    @Test
+    void completesCompositeRecommendationAfterAllRequiredOutcomesDespiteSkippedDuplicate() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：安静 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}}
+                """);
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentStepAction comments = new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_hot_comments", Map.of("songId", "qqmusic:quiet", "limit", 1), "读评论", 0.9, "用户要热评");
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首歌", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        comments,
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:quiet"), "读歌词", 0.9, "用户要歌词"),
+                        comments,
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "add_song_to_musio_playlist", Map.of("songId", "qqmusic:quiet"), "收藏歌曲", 0.9, "用户要加入歌单")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首歌，获取最热门评论和歌词，并加入歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "推荐一首歌，获取最热门评论和歌词，并加入歌单",
+                        "推荐一首歌，获取最热门评论和歌词，并加入歌单",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.COMMENTS, AgentRequiredOutcome.LYRICS, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals("tool_completion", outcome.reason());
+        assertEquals(5, outcome.evidence().observations().size());
+        assertEquals(AgentObservationStatus.SKIPPED, outcome.evidence().observations().get(3).status());
+        assertTrue(outcome.evidence().observations().get(3).resultJson().contains("duplicate_tool_call"));
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(4).status());
+    }
+
     private static class StubPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
         private final String resultJson;
 
@@ -853,15 +950,23 @@ class AgentLoopRunnerTest {
     }
 
     private AgentToolExecutor toolExecutor(MusicProvider provider) {
+        return new AgentToolExecutor(musicReadTools(provider));
+    }
+
+    private MusicReadCapabilityHandler musicReadCapabilityHandler() {
+        return new MusicReadCapabilityHandler(musicReadTools(new FakeProvider()));
+    }
+
+    private MusicReadTools musicReadTools(MusicProvider provider) {
         AgentEventBus eventBus = new AgentEventBus();
-        return new AgentToolExecutor(new MusicReadTools(
+        return new MusicReadTools(
                 new MusicProviderGateway(List.of(provider)),
                 null,
                 eventBus,
                 new ObjectMapper(),
                 new AgentTracePublisher(eventBus),
                 null
-        ));
+        );
     }
 
     private AgentTaskMemory memoryWithTargetSong() {

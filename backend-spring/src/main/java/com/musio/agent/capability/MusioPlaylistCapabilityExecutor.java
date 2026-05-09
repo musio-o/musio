@@ -94,9 +94,6 @@ public class MusioPlaylistCapabilityExecutor {
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
-        if (songIndex != null && songIndex >= 1 && songIndex <= candidates.size()) {
-            return candidates.get(songIndex - 1);
-        }
         if (songId != null && !songId.isBlank()) {
             for (Song song : candidates) {
                 if (song != null && songId.equals(song.id())) {
@@ -119,6 +116,9 @@ public class MusioPlaylistCapabilityExecutor {
                     .filter(song -> titleMatches(song, normalizedTitle))
                     .findFirst()
                     .orElse(null);
+        }
+        if (songIndex != null && songIndex >= 1 && songIndex <= candidates.size()) {
+            return candidates.get(songIndex - 1);
         }
         return candidates.getFirst();
     }

@@ -69,18 +69,18 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         if (capability == null) {
             return Optional.empty();
         }
-        return Optional.of(capability.executor().execute(arguments == null ? Map.of() : arguments));
+        return Optional.of(capability.executor().execute(state, arguments == null ? Map.of() : arguments));
     }
 
     private Map<String, ReadCapability> readCapabilities() {
         Map<String, ReadCapability> values = new LinkedHashMap<>();
-        register(values, new AgentCapability("search_songs", CapabilityEffect.READ, "搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。", "{\"keyword\": string, \"limit\": number, \"excludedTitles\": string[]}", Set.of("keyword", "limit")), this::searchSongs);
-        register(values, new AgentCapability("get_user_music_profile", CapabilityEffect.READ, "读取本地音乐画像摘要。", "{}", Set.of()), ignored -> musicReadTools.getUserMusicProfile());
-        register(values, new AgentCapability("get_song_detail", CapabilityEffect.READ, "读取歌曲详情。", "{\"songId\": string}", Set.of("songId")), arguments -> musicReadTools.getSongDetail(text(arguments, "songId")));
-        register(values, new AgentCapability("get_lyrics", CapabilityEffect.READ, "读取歌词。", "{\"songId\": string}", Set.of("songId")), arguments -> musicReadTools.getLyrics(text(arguments, "songId")));
-        register(values, new AgentCapability("get_hot_comments", CapabilityEffect.READ, "读取热门评论。", "{\"songId\": string, \"limit\": number}", Set.of("songId")), arguments -> musicReadTools.getHotComments(text(arguments, "songId"), integer(arguments, "limit")));
-        register(values, new AgentCapability("get_user_playlists", CapabilityEffect.READ, "读取用户歌单。", "{\"limit\": number}", Set.of()), arguments -> musicReadTools.getUserPlaylists(integer(arguments, "limit")));
-        register(values, new AgentCapability("get_playlist_songs", CapabilityEffect.READ, "读取歌单歌曲。", "{\"playlistId\": string, \"limit\": number}", Set.of("playlistId")), arguments -> musicReadTools.getPlaylistSongs(text(arguments, "playlistId"), integer(arguments, "limit")));
+        register(values, new AgentCapability("search_songs", CapabilityEffect.READ, "搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。", "{\"keyword\": string, \"limit\": number, \"excludedTitles\": string[]}", Set.of("keyword", "limit")), (state, arguments) -> searchSongs(arguments));
+        register(values, new AgentCapability("get_user_music_profile", CapabilityEffect.READ, "读取本地音乐画像摘要。", "{}", Set.of()), (state, ignored) -> musicReadTools.getUserMusicProfile());
+        register(values, new AgentCapability("get_song_detail", CapabilityEffect.READ, "读取歌曲详情。", "{\"songId\": string}", Set.of("songId")), (state, arguments) -> musicReadTools.getSongDetail(text(arguments, "songId")));
+        register(values, new AgentCapability("get_lyrics", CapabilityEffect.READ, "读取一首或多首歌曲的歌词。", "{\"songId\": string, \"songIds\": string[]}", Set.of()), this::getLyrics);
+        register(values, new AgentCapability("get_hot_comments", CapabilityEffect.READ, "读取一首或多首歌曲的热门评论。", "{\"songId\": string, \"songIds\": string[], \"limit\": number}", Set.of()), this::getHotComments);
+        register(values, new AgentCapability("get_user_playlists", CapabilityEffect.READ, "读取用户歌单。", "{\"limit\": number}", Set.of()), (state, arguments) -> musicReadTools.getUserPlaylists(integer(arguments, "limit")));
+        register(values, new AgentCapability("get_playlist_songs", CapabilityEffect.READ, "读取歌单歌曲。", "{\"playlistId\": string, \"limit\": number}", Set.of("playlistId")), (state, arguments) -> musicReadTools.getPlaylistSongs(text(arguments, "playlistId"), integer(arguments, "limit")));
         return values;
     }
 
@@ -94,6 +94,29 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
             return musicReadTools.searchSongsExcludingTitles(text(arguments, "keyword"), integer(arguments, "limit"), excludedTitles);
         }
         return musicReadTools.searchSongs(text(arguments, "keyword"), integer(arguments, "limit"));
+    }
+
+    private String getLyrics(AgentLoopState state, Map<String, Object> arguments) {
+        List<String> ids = unreadSongIds(state, arguments, "get_lyrics");
+        if (ids.size() > 1) {
+            return musicReadTools.getLyricsForSongs(ids);
+        }
+        if (ids.size() == 1) {
+            return musicReadTools.getLyrics(ids.getFirst());
+        }
+        return musicReadTools.getLyrics(text(arguments, "songId"));
+    }
+
+    private String getHotComments(AgentLoopState state, Map<String, Object> arguments) {
+        List<String> ids = unreadSongIds(state, arguments, "get_hot_comments");
+        Integer limit = integer(arguments, "limit");
+        if (ids.size() > 1) {
+            return musicReadTools.getHotCommentsForSongs(ids, limit);
+        }
+        if (ids.size() == 1) {
+            return musicReadTools.getHotComments(ids.getFirst(), limit);
+        }
+        return musicReadTools.getHotComments(text(arguments, "songId"), limit);
     }
 
     private String text(Map<String, Object> arguments, String key) {
@@ -128,11 +151,35 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
                 .toList();
     }
 
+    private List<String> unreadSongIds(AgentLoopState state, Map<String, Object> arguments, String toolName) {
+        List<String> requested = songIds(arguments);
+        if (requested.isEmpty()) {
+            return List.of();
+        }
+        java.util.Set<String> observed = AgentCapabilityStateFacts.successfulReadSongIds(state, toolName);
+        if (observed.isEmpty()) {
+            return requested;
+        }
+        return requested.stream()
+                .filter(songId -> !observed.contains(songId))
+                .toList();
+    }
+
+    private List<String> songIds(Map<String, Object> arguments) {
+        java.util.LinkedHashSet<String> ids = new java.util.LinkedHashSet<>();
+        String songId = text(arguments, "songId");
+        if (!songId.isBlank()) {
+            ids.add(songId);
+        }
+        ids.addAll(stringList(arguments.get("songIds")));
+        return ids.stream().limit(10).toList();
+    }
+
     private record ReadCapability(AgentCapability spec, ReadExecutor executor) {
     }
 
     @FunctionalInterface
     private interface ReadExecutor {
-        String execute(Map<String, Object> arguments);
+        String execute(AgentLoopState state, Map<String, Object> arguments);
     }
 }

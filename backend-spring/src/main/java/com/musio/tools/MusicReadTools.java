@@ -19,11 +19,14 @@ import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Supplier;
 
 @Component
@@ -117,18 +120,101 @@ public class MusicReadTools {
         });
     }
 
+    public String getLyricsForSongs(List<String> songIds) {
+        List<String> ids = cleanSongIds(songIds);
+        if (ids.size() == 1) {
+            return getLyrics(ids.getFirst());
+        }
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("songIds", ids);
+        return runTool("get_lyrics", input, () -> {
+            List<Map<String, Object>> results = new ArrayList<>();
+            int successCount = 0;
+            Lyrics firstLyrics = null;
+            for (String id : ids) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("songId", id);
+                try {
+                    Lyrics lyrics = providerGateway.defaultProvider().getLyrics(id);
+                    item.put("success", true);
+                    item.put("lyrics", lyrics);
+                    if (firstLyrics == null) {
+                        firstLyrics = lyrics;
+                    }
+                    successCount++;
+                } catch (Exception e) {
+                    item.put("success", false);
+                    item.put("message", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                }
+                results.add(item);
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", successCount > 0);
+            result.put("requestedCount", ids.size());
+            result.put("count", successCount);
+            result.put("lyricsResults", results);
+            if (firstLyrics != null) {
+                result.put("lyrics", firstLyrics);
+            }
+            if (successCount == 0) {
+                result.put("message", "没有成功读取到歌词。");
+            }
+            return result;
+        });
+    }
+
     @Tool(name = "get_hot_comments", description = "Get hot comments for one QQ Music song. Use this for comment analysis or listener sentiment.")
     public String getHotComments(
             @ToolParam(description = "Song id, preferably provider-prefixed, for example qqmusic:003OUlho2HcRHC") String songId,
             @ToolParam(description = "Maximum number of comments to return. Default 10, maximum 30") Integer limit) {
         int actualLimit = clamp(limit, 10, 1, 30);
         return runTool("get_hot_comments", Map.of("songId", songId, "limit", actualLimit), () -> {
-            List<Comment> comments = providerGateway.defaultProvider().getComments(songId).stream()
-                    .filter(this::isUserHotComment)
-                    .sorted(Comparator.comparingInt(this::likedCount).reversed())
-                    .limit(actualLimit)
-                    .toList();
+            List<Comment> comments = hotComments(songId, actualLimit);
             return Map.of("success", true, "count", comments.size(), "comments", comments);
+        });
+    }
+
+    public String getHotCommentsForSongs(List<String> songIds, Integer limit) {
+        List<String> ids = cleanSongIds(songIds);
+        if (ids.size() == 1) {
+            return getHotComments(ids.getFirst(), limit);
+        }
+        int actualLimit = clamp(limit, 10, 1, 30);
+        Map<String, Object> input = new LinkedHashMap<>();
+        input.put("songIds", ids);
+        input.put("limit", actualLimit);
+        return runTool("get_hot_comments", input, () -> {
+            List<Map<String, Object>> results = new ArrayList<>();
+            List<Comment> allComments = new ArrayList<>();
+            int successCount = 0;
+            for (String id : ids) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("songId", id);
+                try {
+                    List<Comment> comments = hotComments(id, actualLimit);
+                    item.put("success", true);
+                    item.put("count", comments.size());
+                    item.put("comments", comments);
+                    allComments.addAll(comments);
+                    successCount++;
+                } catch (Exception e) {
+                    item.put("success", false);
+                    item.put("count", 0);
+                    item.put("comments", List.of());
+                    item.put("message", e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+                }
+                results.add(item);
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("success", successCount > 0);
+            result.put("requestedCount", ids.size());
+            result.put("count", allComments.size());
+            result.put("commentResults", results);
+            result.put("comments", List.copyOf(allComments));
+            if (successCount == 0) {
+                result.put("message", "没有成功读取到热门评论。");
+            }
+            return result;
         });
     }
 
@@ -289,6 +375,30 @@ public class MusicReadTools {
 
     private int likedCount(Comment comment) {
         return comment == null || comment.likedCount() == null ? 0 : Math.max(0, comment.likedCount());
+    }
+
+    private List<Comment> hotComments(String songId, int limit) {
+        return providerGateway.defaultProvider().getComments(songId).stream()
+                .filter(this::isUserHotComment)
+                .sorted(Comparator.comparingInt(this::likedCount).reversed())
+                .limit(limit)
+                .toList();
+    }
+
+    private List<String> cleanSongIds(List<String> songIds) {
+        if (songIds == null || songIds.isEmpty()) {
+            return List.of();
+        }
+        Set<String> ids = new LinkedHashSet<>();
+        for (String songId : songIds) {
+            if (songId != null && !songId.isBlank()) {
+                ids.add(songId.strip());
+            }
+            if (ids.size() >= 10) {
+                break;
+            }
+        }
+        return List.copyOf(ids);
     }
 
     private String normalizeTitle(String value) {

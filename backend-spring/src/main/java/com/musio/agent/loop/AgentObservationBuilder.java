@@ -89,10 +89,18 @@ public class AgentObservationBuilder {
             return toolName + " 成功，歌曲 " + songs.size() + " 首：" + songRefs(songs);
         }
         JsonNode comments = root.path("comments");
+        JsonNode commentResults = root.path("commentResults");
+        if (commentResults.isArray()) {
+            return toolName + " 成功，歌曲 " + commentResults.size() + " 首，评论 " + comments.size() + " 条";
+        }
         if (comments.isArray()) {
             return toolName + " 成功，评论 " + comments.size() + " 条";
         }
         JsonNode lyrics = root.path("lyrics");
+        JsonNode lyricsResults = root.path("lyricsResults");
+        if (lyricsResults.isArray()) {
+            return toolName + " 成功，已读取歌词 " + successfulResultCount(lyricsResults) + "/" + lyricsResults.size() + " 首";
+        }
         if (lyrics.isObject()) {
             String songId = lyrics.path("songId").asText("");
             return songId.isBlank() ? toolName + " 成功，已读取歌词" : toolName + " 成功，已读取歌词 songId=" + songId;
@@ -223,5 +231,18 @@ public class AgentObservationBuilder {
             }
         }
         return String.join("；", refs);
+    }
+
+    private int successfulResultCount(JsonNode results) {
+        if (!results.isArray()) {
+            return 0;
+        }
+        int count = 0;
+        for (JsonNode result : results) {
+            if (result.path("success").asBoolean(false)) {
+                count++;
+            }
+        }
+        return count;
     }
 }

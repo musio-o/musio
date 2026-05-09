@@ -63,6 +63,17 @@ final class AgentCapabilityArgumentRules {
         if ("get_song_detail".equals(capabilityName) || "get_lyrics".equals(capabilityName) || "get_hot_comments".equals(capabilityName)) {
             cleaned.put("songId", text(cleaned, "songId"));
         }
+        if ("get_lyrics".equals(capabilityName) || "get_hot_comments".equals(capabilityName)) {
+            List<String> songIds = stringList(cleaned.get("songIds"));
+            if (songIds.isEmpty()) {
+                cleaned.remove("songIds");
+            } else {
+                cleaned.put("songIds", songIds.stream().limit(10).toList());
+                if (text(cleaned, "songId").isBlank()) {
+                    cleaned.put("songId", songIds.getFirst());
+                }
+            }
+        }
         if ("get_hot_comments".equals(capabilityName)) {
             cleaned.put("limit", cleanLimit(cleaned.get("limit"), 10, 1, 30));
         }
@@ -113,7 +124,10 @@ final class AgentCapabilityArgumentRules {
             case "search_songs" -> hasText(arguments, "keyword") && integer(arguments, "limit") != null
                     ? AgentCapabilityValidationResult.accepted()
                     : AgentCapabilityValidationResult.rejected("missing_required_argument");
-            case "get_song_detail", "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId")
+            case "get_lyrics", "get_hot_comments" -> hasText(arguments, "songId") || !stringList(arguments == null ? null : arguments.get("songIds")).isEmpty()
+                    ? AgentCapabilityValidationResult.accepted()
+                    : AgentCapabilityValidationResult.rejected("missing_required_argument");
+            case "get_song_detail" -> hasText(arguments, "songId")
                     ? AgentCapabilityValidationResult.accepted()
                     : AgentCapabilityValidationResult.rejected("missing_required_argument");
             case "get_playlist_songs" -> hasText(arguments, "playlistId")

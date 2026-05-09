@@ -207,6 +207,8 @@ public class AgentStepPlanner {
                 - recommend_songs observation 会提供 requestedTotal、resolvedTotal、slotResults、songs、unresolved；推荐是否完成必须以这些结构化覆盖度为准。
                 - 如果 recommend_songs 已成功返回足够 songs / slotResults 已覆盖所有 slots，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
+                - 如果用户要对多首已推荐/已搜索歌曲读取歌词或热门评论，优先用 get_lyrics.songIds 或 get_hot_comments.songIds 一次传入多个 songId，不要逐首拆成多次工具调用。
+                - 如果同一个 songId 的 get_hot_comments / get_lyrics / get_song_detail 已经成功出现在 observations 中，不要再次调用同一个工具；应继续处理还没完成的目标。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.limit 必须显式填写；完全没有数量含义时默认 5。
                 - 如果“本轮用户要求的歌曲数量”是明确数字，search_songs.limit 不得超过这个数字；例如用户说“推荐一首”时 limit 必须是 1。
@@ -214,6 +216,7 @@ public class AgentStepPlanner {
                 - get_hot_comments.limit 默认 10，最大 30。
                 - 如果用户说“最热门的评论/一条评论/一条热评”，get_hot_comments.limit 应填写 1。
                 - add_song_to_musio_playlist 只有在用户本轮明确要求收藏/保存/加入 Musio 歌单或已经确认收藏、且出现在“本轮可用能力”时才允许调用；它只写入本地 Musio 歌单，不代表 QQ 音乐账号收藏。
+                - add_song_to_musio_playlist 如果已经能确定 songId，不要再同时填写可能冲突的 songIndex；songIndex 只用于“第一首/第二首”这种没有明确 songId 的引用。
                 - 如果用户要求写入 QQ 音乐账号、公开评论、账号收藏等 account_write 能力，但本轮可用能力没有对应工具，应输出 request_confirmation 或 unsupported，不要改用本地 Musio 写入冒充账号写入。
                 - add_song_to_musio_playlist 至少应提供 songId、songIndex、songTitle 三者之一；playlistId 缺省为 default。
                 - 不要输出 chain-of-thought。

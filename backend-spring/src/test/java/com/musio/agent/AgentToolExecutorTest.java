@@ -122,6 +122,24 @@ class AgentToolExecutorTest {
         assertTrue(executions.get(3).resultJson().contains("夜曲"));
     }
 
+    @Test
+    void executesBatchLyricsAndCommentsWithSongIds() {
+        AgentToolExecutor executor = new AgentToolExecutor(tools());
+        AgentToolPlan plan = new AgentToolPlan(List.of(
+                new AgentToolCall("get_lyrics", Map.of("songIds", List.of("qqmusic:1", "qqmusic:2"))),
+                new AgentToolCall("get_hot_comments", Map.of("songIds", List.of("qqmusic:1", "qqmusic:2"), "limit", 1))
+        ), 0.9);
+
+        List<AgentToolExecution> executions = executor.execute(plan);
+
+        assertEquals(2, executions.size());
+        assertTrue(executions.getFirst().resultJson().contains("\"lyricsResults\""));
+        assertTrue(executions.getFirst().resultJson().contains("qqmusic:2"));
+        assertTrue(executions.get(1).resultJson().contains("\"commentResults\""));
+        assertTrue(executions.get(1).resultJson().contains("\"requestedCount\":2"));
+        assertTrue(executions.get(1).resultJson().contains("整个故事都在下雨"));
+    }
+
     private MusicReadTools tools() {
         return tools(null);
     }
