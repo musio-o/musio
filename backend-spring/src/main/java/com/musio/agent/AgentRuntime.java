@@ -20,6 +20,7 @@ import com.musio.config.MusioConfig;
 import com.musio.config.MusioConfigService;
 import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
+import com.musio.model.ChatConfirmation;
 import com.musio.model.ChatRequest;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.AgentTaskMemory;
@@ -181,6 +182,7 @@ public class AgentRuntime {
                 publishAnswerText(runId, ai, preludeContext.answerPrefix(), traceEnabled, composeStarted);
             }
             publishSongCards(runId, preludeContext.songs());
+            publishConfirmationRequest(runId, preludeContext.confirmation());
             if (preludeContext.directAnswer()) {
                 if (traceEnabled) {
                     if (!composeStarted[0]) {
@@ -189,7 +191,7 @@ public class AgentRuntime {
                     tracePublisher.publishComposeDone(runId);
                 }
                 recordDirectPreludeMemory(userId, taskContext, preludeContext);
-                conversationHistoryService.appendTurn(userId, request.message(), preludeContext.answerPrefix(), preludeContext.songs());
+                conversationHistoryService.appendTurn(userId, request.message(), preludeContext.answerPrefix(), preludeContext.songs(), preludeContext.confirmation());
                 eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
                 return;
             }
@@ -226,7 +228,7 @@ public class AgentRuntime {
             }
 
             answerText = combineAnswer(preludeContext.answerPrefix(), answerText);
-            conversationHistoryService.appendTurn(userId, request.message(), answerText, preludeContext.songs());
+            conversationHistoryService.appendTurn(userId, request.message(), answerText, preludeContext.songs(), preludeContext.confirmation());
 
             eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId)));
         } catch (Exception e) {
@@ -579,13 +581,14 @@ public class AgentRuntime {
                         本轮用户表达了加入本地 Musio 歌单的意图，但本地歌单写入必须二次确认。
                         本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
                         已保存待确认收藏目标：%s。
-                        最终回答必须明确说明：尚未加入本地 Musio 歌单，需要用户回复“确认收藏”后才会写入。
+                        最终回答必须明确说明：尚未加入本地 Musio 歌单，可以点击确认按钮或回复“确认收藏”后写入。
                         工具调用阶段已经结束；最终回答阶段不能再调用工具，也不能输出 <tool_call>、<function=...>、JSON 工具调用或任何工具调用协议文本。
                         你必须直接生成面向用户的中文自然语言回答。
                         """.formatted(songTitle(pendingLocalPlaylistAdd.song())),
                         true,
                         List.of(pendingLocalPlaylistAdd.song()),
-                        "");
+                        "",
+                        confirmationFor(pendingLocalPlaylistAdd));
             }
             if (taskContext.toolEvidenceExpected() || capabilityManifest.allowsLocalWrite()) {
                 return new PreludeContext("""
@@ -623,7 +626,8 @@ public class AgentRuntime {
                 ),
                 true,
                 evidence.songs(),
-                "");
+                "",
+                confirmationFor(pendingLocalPlaylistAdd));
     }
 
     private PendingLocalPlaylistAdd savePendingLocalPlaylistAdd(
@@ -677,7 +681,7 @@ public class AgentRuntime {
                 本轮用户表达了加入本地 Musio 歌单的意图，但本地歌单写入必须二次确认。
                 本轮尚未执行 add_song_to_musio_playlist，不能说已经加入歌单。
                 已保存待确认收藏目标：%s。
-                最终回答必须明确说明：尚未加入本地 Musio 歌单，需要用户回复“确认收藏”后才会写入。
+                最终回答必须明确说明：尚未加入本地 Musio 歌单，可以点击确认按钮或回复“确认收藏”后写入。
                 """.formatted(songTitle(pending.song())).strip();
     }
 
@@ -722,6 +726,32 @@ public class AgentRuntime {
                 "runId", runId,
                 "songs", songs
         )));
+    }
+
+    private void publishConfirmationRequest(String runId, ChatConfirmation confirmation) {
+        if (confirmation == null) {
+            return;
+        }
+        eventBus.publish(runId, AgentEvent.of("confirmation_request", Map.of(
+                "runId", runId,
+                "confirmation", confirmation
+        )));
+    }
+
+    private ChatConfirmation confirmationFor(PendingLocalPlaylistAdd pending) {
+        if (pending == null || pending.song() == null) {
+            return null;
+        }
+        String title = "收藏到 Musio 歌单";
+        String description = "将《%s》加入本地 Musio 默认歌单。".formatted(songTitle(pending.song()));
+        return new ChatConfirmation(
+                "local_playlist_add",
+                title,
+                description,
+                "确认收藏",
+                "取消收藏",
+                pending.song()
+        );
     }
 
     private Prompt conversationPrompt(
@@ -887,13 +917,17 @@ public class AgentRuntime {
         return new TraceHeartbeat(future);
     }
 
-    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer) {
+    private record PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, boolean directAnswer, ChatConfirmation confirmation) {
         static PreludeContext empty() {
             return new PreludeContext("", false, List.of(), "");
         }
 
         private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix) {
-            this(text, evidenceBound, songs, answerPrefix, false);
+            this(text, evidenceBound, songs, answerPrefix, false, null);
+        }
+
+        private PreludeContext(String text, boolean evidenceBound, List<Song> songs, String answerPrefix, ChatConfirmation confirmation) {
+            this(text, evidenceBound, songs, answerPrefix, false, confirmation);
         }
 
         private PreludeContext {

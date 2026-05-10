@@ -1,4 +1,4 @@
-import { Song } from "../../shared/types";
+import { ChatConfirmation, Song } from "../../shared/types";
 
 export type ChatMessageRole = "user" | "agent";
 
@@ -21,6 +21,10 @@ export type TraceStep = {
   safeData?: Record<string, unknown>;
 };
 
+export type ChatConfirmationState = ChatConfirmation & {
+  status?: "pending" | "confirmed" | "cancelled";
+};
+
 export type ChatMessage = {
   id: string;
   role: ChatMessageRole;
@@ -29,6 +33,7 @@ export type ChatMessage = {
   runId?: string;
   traceSteps?: TraceStep[];
   songs?: Song[];
+  confirmation?: ChatConfirmationState;
 };
 
 export function mergeTraceStep(current: TraceStep[] | undefined, next: TraceStep): TraceStep[] {

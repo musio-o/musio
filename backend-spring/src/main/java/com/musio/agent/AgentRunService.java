@@ -2,10 +2,13 @@ package com.musio.agent;
 
 import com.musio.events.AgentEventBus;
 import com.musio.events.SseEventPublisher;
+import com.musio.memory.AgentTaskMemoryService;
 import com.musio.model.AgentEvent;
+import com.musio.model.ChatConfirmation;
 import com.musio.model.ChatHistoryMessage;
 import com.musio.model.ChatRequest;
 import com.musio.model.ChatRunResponse;
+import com.musio.model.AgentTaskMemory;
 import com.musio.model.PendingConfirmation;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
@@ -25,6 +28,7 @@ public class AgentRunService {
     private final SseEventPublisher eventPublisher;
     private final AgentEventBus eventBus;
     private final ConversationHistoryService conversationHistoryService;
+    private final AgentTaskMemoryService taskMemoryService;
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final Map<String, ChatRequest> pendingRuns = new ConcurrentHashMap<>();
     private final Map<String, Future<?>> runningRuns = new ConcurrentHashMap<>();
@@ -33,12 +37,14 @@ public class AgentRunService {
             AgentRuntime agentRuntime,
             SseEventPublisher eventPublisher,
             AgentEventBus eventBus,
-            ConversationHistoryService conversationHistoryService
+            ConversationHistoryService conversationHistoryService,
+            AgentTaskMemoryService taskMemoryService
     ) {
         this.agentRuntime = agentRuntime;
         this.eventPublisher = eventPublisher;
         this.eventBus = eventBus;
         this.conversationHistoryService = conversationHistoryService;
+        this.taskMemoryService = taskMemoryService;
     }
 
     public ChatRunResponse startRun(ChatRequest request) {
@@ -99,8 +105,15 @@ public class AgentRunService {
 
     public List<ChatHistoryMessage> history(String userId) {
         String normalizedUserId = conversationHistoryService.normalizeUserId(userId);
+        AgentTaskMemory taskMemory = taskMemoryService.read(normalizedUserId);
         return conversationHistoryService.load(normalizedUserId).stream()
-                .map(message -> new ChatHistoryMessage(message.role(), message.content(), message.createdAt(), message.songs()))
+                .map(message -> new ChatHistoryMessage(
+                        message.role(),
+                        message.content(),
+                        message.createdAt(),
+                        message.songs(),
+                        activeConfirmation(message.confirmation(), taskMemory)
+                ))
                 .toList();
     }
 
@@ -111,5 +124,19 @@ public class AgentRunService {
 
     private boolean isTerminal(AgentEvent event) {
         return "done".equals(event.type()) || "agent_error".equals(event.type());
+    }
+
+    private ChatConfirmation activeConfirmation(ChatConfirmation confirmation, AgentTaskMemory taskMemory) {
+        if (confirmation == null || taskMemory == null || taskMemory.pendingLocalPlaylistAdd() == null) {
+            return null;
+        }
+        if (!"local_playlist_add".equals(confirmation.type())) {
+            return null;
+        }
+        String pendingSongId = taskMemory.pendingLocalPlaylistAdd().song() == null
+                ? ""
+                : taskMemory.pendingLocalPlaylistAdd().song().id();
+        String confirmationSongId = confirmation.song() == null ? "" : confirmation.song().id();
+        return !pendingSongId.isBlank() && pendingSongId.equals(confirmationSongId) ? confirmation : null;
     }
 }

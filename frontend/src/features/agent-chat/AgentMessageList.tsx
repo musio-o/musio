@@ -1,7 +1,7 @@
 import { CSSProperties, useEffect, useRef, useState } from "react";
-import { BookmarkPlus, ChevronDown, ChevronRight, ListPlus, Play } from "lucide-react";
+import { BookmarkPlus, Check, ChevronDown, ChevronRight, ListPlus, Play, X } from "lucide-react";
 import { Song } from "../../shared/types";
-import { ChatMessage, TraceStep } from "./chatTypes";
+import { ChatConfirmationState, ChatMessage, TraceStep } from "./chatTypes";
 import { MarkdownContent } from "./MarkdownContent";
 
 type AgentMessageListProps = {
@@ -9,9 +9,18 @@ type AgentMessageListProps = {
   onPlaySong: (song: Song) => void;
   onAddToQueue: (song: Song) => void;
   onFavoriteSong: (song: Song) => void;
+  onConfirmationAction: (messageId: string, action: "confirm" | "cancel", text: string) => void;
+  confirmationBusy: boolean;
 };
 
-export function AgentMessageList({ messages, onPlaySong, onAddToQueue, onFavoriteSong }: AgentMessageListProps) {
+export function AgentMessageList({
+  messages,
+  onPlaySong,
+  onAddToQueue,
+  onFavoriteSong,
+  onConfirmationAction,
+  confirmationBusy
+}: AgentMessageListProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -57,6 +66,12 @@ export function AgentMessageList({ messages, onPlaySong, onAddToQueue, onFavorit
                     onAddToQueue={onAddToQueue}
                     onFavoriteSong={onFavoriteSong}
                   />
+                  <ConfirmationActions
+                    messageId={message.id}
+                    confirmation={message.confirmation}
+                    busy={confirmationBusy}
+                    onAction={onConfirmationAction}
+                  />
                 </>
               ) : (
                 <p>{message.content}</p>
@@ -68,6 +83,59 @@ export function AgentMessageList({ messages, onPlaySong, onAddToQueue, onFavorit
           </article>
         );
       })}
+    </div>
+  );
+}
+
+function ConfirmationActions({
+  messageId,
+  confirmation,
+  busy,
+  onAction
+}: {
+  messageId: string;
+  confirmation?: ChatConfirmationState;
+  busy: boolean;
+  onAction: (messageId: string, action: "confirm" | "cancel", text: string) => void;
+}) {
+  if (!confirmation) {
+    return null;
+  }
+
+  const resolved = confirmation.status === "confirmed" || confirmation.status === "cancelled";
+  const statusText = confirmation.status === "confirmed"
+    ? "已确认"
+    : confirmation.status === "cancelled"
+      ? "已取消"
+      : "";
+
+  return (
+    <div className={`chat-confirmation ${resolved ? "resolved" : ""}`} aria-label={confirmation.title || "等待确认"}>
+      <div className="chat-confirmation-copy">
+        <strong>{confirmation.title || "需要确认"}</strong>
+        {confirmation.description ? <span>{confirmation.description}</span> : null}
+      </div>
+      {statusText ? <span className="chat-confirmation-status">{statusText}</span> : null}
+      <div className="chat-confirmation-actions">
+        <button
+          type="button"
+          className="cancel"
+          disabled={busy || resolved}
+          onClick={() => onAction(messageId, "cancel", confirmation.cancelText || "取消收藏")}
+        >
+          <X size={15} />
+          <span>取消</span>
+        </button>
+        <button
+          type="button"
+          className="confirm"
+          disabled={busy || resolved}
+          onClick={() => onAction(messageId, "confirm", confirmation.confirmText || "确认收藏")}
+        >
+          <Check size={15} />
+          <span>确认</span>
+        </button>
+      </div>
     </div>
   );
 }

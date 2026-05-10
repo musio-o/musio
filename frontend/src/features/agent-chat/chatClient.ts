@@ -1,5 +1,5 @@
 import { api } from "../../shared/api";
-import { AgentEvent, Song } from "../../shared/types";
+import { AgentEvent, ChatConfirmation, Song } from "../../shared/types";
 import { TraceStep, TraceStepStage, TraceStepStatus, TraceStepVisibility } from "./chatTypes";
 
 type AgentRunHandlers = {
@@ -8,6 +8,7 @@ type AgentRunHandlers = {
   onToolStart: (detail: string) => void;
   onToolResult: (detail: string) => void;
   onSongCards: (songs: Song[], runId?: string) => void;
+  onConfirmationRequest: (confirmation: ChatConfirmation, runId?: string) => void;
   onError: (detail: string) => void;
   onDone: () => void;
 };
@@ -46,6 +47,14 @@ function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
     const eventRunId = typeof agentEvent?.data?.runId === "string" ? agentEvent.data.runId : runId;
     handlers.onSongCards(songs, eventRunId);
   });
+  source.addEventListener("confirmation_request", (event) => {
+    const agentEvent = parseAgentEvent((event as MessageEvent).data);
+    const confirmation = parseConfirmation(agentEvent);
+    if (confirmation) {
+      const eventRunId = typeof agentEvent?.data?.runId === "string" ? agentEvent.data.runId : runId;
+      handlers.onConfirmationRequest(confirmation, eventRunId);
+    }
+  });
   source.addEventListener("agent_error", (event) => {
     const agentEvent = parseAgentEvent((event as MessageEvent).data);
     const detail = typeof agentEvent?.data?.message === "string" ? agentEvent.data.message : (event as MessageEvent).data;
@@ -61,6 +70,29 @@ function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
     source.close();
   };
   return source;
+}
+
+function parseConfirmation(event: AgentEvent | null): ChatConfirmation | null {
+  const confirmation = event?.data?.confirmation;
+  if (!isRecord(confirmation)) {
+    return null;
+  }
+  const type = typeof confirmation.type === "string" ? confirmation.type : "local_playlist_add";
+  const title = typeof confirmation.title === "string" ? confirmation.title : "收藏到 Musio 歌单";
+  const description = typeof confirmation.description === "string" ? confirmation.description : "";
+  const confirmText = typeof confirmation.confirmText === "string" ? confirmation.confirmText : "确认收藏";
+  const cancelText = typeof confirmation.cancelText === "string" ? confirmation.cancelText : "取消收藏";
+  const song = isSong(confirmation.song) ? confirmation.song : null;
+  return { type, title, description, confirmText, cancelText, song };
+}
+
+function isSong(value: unknown): value is Song {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return typeof value.id === "string"
+    && typeof value.title === "string"
+    && Array.isArray(value.artists);
 }
 
 function parseAgentEvent(raw: string): AgentEvent | null {

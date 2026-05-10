@@ -3,6 +3,7 @@ package com.musio.agent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.config.MusioConfigService;
+import com.musio.model.ChatConfirmation;
 import com.musio.model.Song;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +73,10 @@ public class ConversationHistoryService {
     }
 
     public void appendTurn(String userId, String userMessage, String assistantMessage, List<Song> songs) {
+        appendTurn(userId, userMessage, assistantMessage, songs, null);
+    }
+
+    public void appendTurn(String userId, String userMessage, String assistantMessage, List<Song> songs, ChatConfirmation confirmation) {
         String normalizedUserId = normalizeUserId(userId);
         synchronized (lock(normalizedUserId)) {
             Path path = historyPath(normalizedUserId);
@@ -79,7 +84,7 @@ public class ConversationHistoryService {
                 Files.createDirectories(path.getParent());
                 List<String> lines = List.of(
                         writeJson(new ConversationHistoryMessage("user", userMessage, Instant.now(), List.of())),
-                        writeJson(new ConversationHistoryMessage("assistant", assistantMessage, Instant.now(), safeSongs(songs)))
+                        writeJson(new ConversationHistoryMessage("assistant", assistantMessage, Instant.now(), safeSongs(songs), confirmation))
                 );
                 Files.write(path, lines, StandardCharsets.UTF_8,
                         StandardOpenOption.CREATE,

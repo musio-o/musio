@@ -44,15 +44,24 @@ export function AgentChatPanel({
 }: AgentChatPanelProps) {
   async function startChat(event: FormEvent) {
     event.preventDefault();
-    await submitMessage();
+    await submitCurrentDraft();
   }
 
-  async function submitMessage() {
+  async function submitCurrentDraft() {
     if (!message.trim()) {
       return;
     }
 
     const userText = message.trim();
+    onMessageChange("");
+    await submitText(userText);
+  }
+
+  async function submitText(userText: string) {
+    if (!userText.trim()) {
+      return;
+    }
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -61,7 +70,6 @@ export function AgentChatPanel({
     };
 
     onMessagesChange((current) => [...current, userMessage]);
-    onMessageChange("");
     onBusyChange(true);
     try {
       const run = await chatClient.startChat(userText);
@@ -109,6 +117,16 @@ export function AgentChatPanel({
           );
           onEvent({ id: crypto.randomUUID(), name: "song_cards", detail: `收到 ${songs.length} 首歌曲` });
         },
+        onConfirmationRequest: (confirmation, eventRunId) => {
+          onMessagesChange((current) =>
+            current.map((item) =>
+              item.role === "agent" && item.runId === (eventRunId ?? run.runId)
+                ? { ...item, confirmation: { ...confirmation, status: "pending" } }
+                : item
+            )
+          );
+          onEvent({ id: crypto.randomUUID(), name: "confirmation_request", detail: confirmation.title || "等待确认" });
+        },
         onError: (detail) => {
           onMessagesChange((current) =>
             current.map((item) =>
@@ -149,6 +167,21 @@ export function AgentChatPanel({
     }
   }
 
+  function handleConfirmationAction(messageId: string, action: "confirm" | "cancel", text: string) {
+    if (busy || !text.trim()) {
+      return;
+    }
+
+    onMessagesChange((current) =>
+      current.map((item) =>
+        item.id === messageId && item.confirmation
+          ? { ...item, confirmation: { ...item.confirmation, status: action === "confirm" ? "confirmed" : "cancelled" } }
+          : item
+      )
+    );
+    void submitText(text.trim());
+  }
+
   function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) {
       return;
@@ -156,7 +189,7 @@ export function AgentChatPanel({
 
     event.preventDefault();
     if (!busy && message.trim()) {
-      void submitMessage();
+      void submitCurrentDraft();
     }
   }
 
@@ -168,6 +201,8 @@ export function AgentChatPanel({
         onPlaySong={onPlaySong}
         onAddToQueue={onAddToQueue}
         onFavoriteSong={onFavoriteSong}
+        onConfirmationAction={handleConfirmationAction}
+        confirmationBusy={busy}
       />
       <form onSubmit={startChat} className="prompt-form">
         <textarea

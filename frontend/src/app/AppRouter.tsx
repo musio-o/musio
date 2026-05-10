@@ -59,7 +59,8 @@ export function AppRouter() {
           role: item.role === "assistant" ? "agent" : "user",
           content: item.content,
           state: "done",
-          songs: item.songs?.length ? item.songs : undefined
+          songs: item.songs?.length ? item.songs : undefined,
+          confirmation: item.confirmation ? { ...item.confirmation, status: "pending" } : undefined
         }));
         setChatMessages((current) => current.length > 0 ? current : restoredMessages);
       })

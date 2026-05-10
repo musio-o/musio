@@ -6439,6 +6439,83 @@ canvas.magnetic-dot-field::before {
   color: rgba(255, 255, 255, 0.9);
 }
 
+.workspace-workbench .agent-workspace .chat-confirmation {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid rgba(232, 232, 232, 0.16);
+  border-radius: 8px;
+  background: rgba(232, 232, 232, 0.05);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.resolved {
+  opacity: 0.72;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-copy strong {
+  color: rgba(245, 245, 245, 0.9);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-copy span,
+.workspace-workbench .agent-workspace .chat-confirmation-status {
+  color: rgba(232, 232, 232, 0.52);
+  font-family: var(--font-data);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 72px;
+  height: 32px;
+  border: 1px solid rgba(232, 232, 232, 0.18);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(245, 245, 245, 0.82);
+  font-family: var(--font-data);
+  font-size: 11px;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-actions button.confirm {
+  border-color: rgba(126, 231, 196, 0.38);
+  background: rgba(126, 231, 196, 0.1);
+  color: rgba(208, 255, 238, 0.94);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-actions button.cancel {
+  color: rgba(232, 232, 232, 0.62);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-actions button:hover:not(:disabled) {
+  border-color: rgba(245, 245, 245, 0.42);
+  background: rgba(245, 245, 245, 0.1);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .workspace-workbench .agent-workspace .prompt-form {
   gap: 8px;
   padding: 8px;
@@ -6528,6 +6605,14 @@ canvas.magnetic-dot-field::before {
 
   .workspace-workbench .agent-workspace .chat-message.user .chat-bubble {
     max-width: min(84%, calc(100% - 44px));
+  }
+
+  .workspace-workbench .agent-workspace .chat-confirmation {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-workbench .agent-workspace .chat-confirmation-actions {
+    justify-content: flex-end;
   }
 }
 

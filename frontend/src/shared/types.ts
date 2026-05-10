@@ -35,6 +35,7 @@ export type ChatHistoryMessage = {
   content: string;
   createdAt: string;
   songs?: Song[];
+  confirmation?: ChatConfirmation | null;
 };
 
 export type Song = {
@@ -45,6 +46,15 @@ export type Song = {
   album?: string | null;
   durationSeconds?: number | null;
   artworkUrl?: string | null;
+};
+
+export type ChatConfirmation = {
+  type: "local_playlist_add" | string;
+  title: string;
+  description: string;
+  confirmText: string;
+  cancelText: string;
+  song?: Song | null;
 };
 
 export type SongUrl = {
