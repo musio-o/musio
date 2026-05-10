@@ -57,7 +57,7 @@ export function AgentChatPanel({
     await submitText(userText);
   }
 
-  async function submitText(userText: string) {
+  async function submitText(userText: string, displayText = userText) {
     if (!userText.trim()) {
       return;
     }
@@ -65,14 +65,14 @@ export function AgentChatPanel({
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      content: userText,
+      content: displayText,
       state: "done"
     };
 
     onMessagesChange((current) => [...current, userMessage]);
     onBusyChange(true);
     try {
-      const run = await chatClient.startChat(userText);
+      const run = await chatClient.startChat(userText, displayText);
       const agentMessageId = crypto.randomUUID();
       onMessagesChange((current) => [
         ...current,
@@ -121,7 +121,14 @@ export function AgentChatPanel({
           onMessagesChange((current) =>
             current.map((item) =>
               item.role === "agent" && item.runId === (eventRunId ?? run.runId)
-                ? { ...item, confirmation: { ...confirmation, status: "pending" } }
+                ? {
+                  ...item,
+                  confirmation: {
+                    ...confirmation,
+                    status: "pending",
+                    selectedSongIds: confirmation.defaultSelectedSongIds ?? confirmation.songs?.map((song) => song.id)
+                  }
+                }
                 : item
             )
           );
@@ -167,7 +174,7 @@ export function AgentChatPanel({
     }
   }
 
-  function handleConfirmationAction(messageId: string, action: "confirm" | "cancel", text: string) {
+  function handleConfirmationAction(messageId: string, action: "confirm" | "cancel", text: string, selectedSongIds: string[]) {
     if (busy || !text.trim()) {
       return;
     }
@@ -179,7 +186,8 @@ export function AgentChatPanel({
           : item
       )
     );
-    void submitText(text.trim());
+    const selectedSuffix = selectedSongIds.length > 0 ? `：${selectedSongIds.join(",")}` : "";
+    void submitText(`${text.trim()}${selectedSuffix}`, text.trim());
   }
 
   function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {

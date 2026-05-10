@@ -83,7 +83,14 @@ function parseConfirmation(event: AgentEvent | null): ChatConfirmation | null {
   const confirmText = typeof confirmation.confirmText === "string" ? confirmation.confirmText : "确认收藏";
   const cancelText = typeof confirmation.cancelText === "string" ? confirmation.cancelText : "取消收藏";
   const song = isSong(confirmation.song) ? confirmation.song : null;
-  return { type, title, description, confirmText, cancelText, song };
+  const songs = Array.isArray(confirmation.songs)
+    ? confirmation.songs.filter(isSong)
+    : song ? [song] : [];
+  const selectionMode = typeof confirmation.selectionMode === "string" ? confirmation.selectionMode : songs.length > 1 ? "multiple" : "single";
+  const defaultSelectedSongIds = Array.isArray(confirmation.defaultSelectedSongIds)
+    ? confirmation.defaultSelectedSongIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+    : songs.map((item) => item.id);
+  return { type, title, description, confirmText, cancelText, song: song ?? songs[0] ?? null, songs, selectionMode, defaultSelectedSongIds };
 }
 
 function isSong(value: unknown): value is Song {

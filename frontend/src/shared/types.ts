@@ -55,6 +55,9 @@ export type ChatConfirmation = {
   confirmText: string;
   cancelText: string;
   song?: Song | null;
+  songs?: Song[];
+  selectionMode?: "single" | "multiple" | string;
+  defaultSelectedSongIds?: string[];
 };
 
 export type SongUrl = {

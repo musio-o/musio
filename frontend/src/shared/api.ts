@@ -62,10 +62,10 @@ export const api = {
   logoutProvider: (provider: string) => request<LoginStatus>(`/api/providers/${provider}/logout`, { method: "POST" }),
   startLogin: () => request<LoginStartResult>("/api/auth/qqmusic/qr"),
   loginStatus: (sessionId: string) => request<LoginStatus>(`/api/auth/qqmusic/qr/${sessionId}/status`),
-  startChat: (message: string) =>
+  startChat: (message: string, displayMessage?: string) =>
     request<ChatRunResponse>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ userId: "local", message })
+      body: JSON.stringify({ userId: "local", message, displayMessage })
     }),
   chatHistory: (userId = "local") => request<ChatHistoryMessage[]>(`/api/chat/history/${encodeURIComponent(userId)}`),
   search: (keyword: string, limit = 5) =>

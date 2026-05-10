@@ -60,7 +60,13 @@ export function AppRouter() {
           content: item.content,
           state: "done",
           songs: item.songs?.length ? item.songs : undefined,
-          confirmation: item.confirmation ? { ...item.confirmation, status: "pending" } : undefined
+          confirmation: item.confirmation
+            ? {
+              ...item.confirmation,
+              status: "pending",
+              selectedSongIds: item.confirmation.defaultSelectedSongIds ?? item.confirmation.songs?.map((song) => song.id)
+            }
+            : undefined
         }));
         setChatMessages((current) => current.length > 0 ? current : restoredMessages);
       })

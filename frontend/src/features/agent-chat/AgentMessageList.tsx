@@ -9,7 +9,7 @@ type AgentMessageListProps = {
   onPlaySong: (song: Song) => void;
   onAddToQueue: (song: Song) => void;
   onFavoriteSong: (song: Song) => void;
-  onConfirmationAction: (messageId: string, action: "confirm" | "cancel", text: string) => void;
+  onConfirmationAction: (messageId: string, action: "confirm" | "cancel", text: string, selectedSongIds: string[]) => void;
   confirmationBusy: boolean;
 };
 
@@ -66,12 +66,14 @@ export function AgentMessageList({
                     onAddToQueue={onAddToQueue}
                     onFavoriteSong={onFavoriteSong}
                   />
-                  <ConfirmationActions
-                    messageId={message.id}
-                    confirmation={message.confirmation}
-                    busy={confirmationBusy}
-                    onAction={onConfirmationAction}
-                  />
+                  {message.confirmation ? (
+                    <ConfirmationActions
+                      messageId={message.id}
+                      confirmation={message.confirmation}
+                      busy={confirmationBusy}
+                      onAction={onConfirmationAction}
+                    />
+                  ) : null}
                 </>
               ) : (
                 <p>{message.content}</p>
@@ -94,15 +96,17 @@ function ConfirmationActions({
   onAction
 }: {
   messageId: string;
-  confirmation?: ChatConfirmationState;
+  confirmation: ChatConfirmationState;
   busy: boolean;
-  onAction: (messageId: string, action: "confirm" | "cancel", text: string) => void;
+  onAction: (messageId: string, action: "confirm" | "cancel", text: string, selectedSongIds: string[]) => void;
 }) {
-  if (!confirmation) {
-    return null;
-  }
-
+  const confirmationSongs = confirmationSongsForDisplay(confirmation);
+  const initialSelectedIds = confirmation.selectedSongIds
+    ?? confirmation.defaultSelectedSongIds
+    ?? confirmationSongs.map((song) => song.id);
+  const [selectedSongIds, setSelectedSongIds] = useState(initialSelectedIds);
   const resolved = confirmation.status === "confirmed" || confirmation.status === "cancelled";
+  const multiple = confirmationSongs.length > 1;
   const statusText = confirmation.status === "confirmed"
     ? "已确认"
     : confirmation.status === "cancelled"
@@ -115,13 +119,41 @@ function ConfirmationActions({
         <strong>{confirmation.title || "需要确认"}</strong>
         {confirmation.description ? <span>{confirmation.description}</span> : null}
       </div>
+      {confirmationSongs.length > 0 ? (
+        <div className="chat-confirmation-options">
+          {confirmationSongs.map((song) => {
+            const checked = selectedSongIds.includes(song.id);
+            return (
+              <label key={song.id} className={`chat-confirmation-option ${checked ? "selected" : ""}`}>
+                <input
+                  type={multiple ? "checkbox" : "radio"}
+                  checked={checked}
+                  disabled={busy || resolved}
+                  onChange={() => {
+                    setSelectedSongIds((current) => {
+                      if (!multiple) {
+                        return [song.id];
+                      }
+                      return current.includes(song.id)
+                        ? current.filter((id) => id !== song.id)
+                        : [...current, song.id];
+                    });
+                  }}
+                />
+                <span>{song.title || song.id}</span>
+                <small>{song.artists?.join(" / ") || song.provider || "QQ 音乐"}</small>
+              </label>
+            );
+          })}
+        </div>
+      ) : null}
       {statusText ? <span className="chat-confirmation-status">{statusText}</span> : null}
       <div className="chat-confirmation-actions">
         <button
           type="button"
           className="cancel"
           disabled={busy || resolved}
-          onClick={() => onAction(messageId, "cancel", confirmation.cancelText || "取消收藏")}
+          onClick={() => onAction(messageId, "cancel", confirmation.cancelText || "取消收藏", [])}
         >
           <X size={15} />
           <span>取消</span>
@@ -129,8 +161,8 @@ function ConfirmationActions({
         <button
           type="button"
           className="confirm"
-          disabled={busy || resolved}
-          onClick={() => onAction(messageId, "confirm", confirmation.confirmText || "确认收藏")}
+          disabled={busy || resolved || selectedSongIds.length === 0}
+          onClick={() => onAction(messageId, "confirm", confirmation.confirmText || "确认收藏", selectedSongIds)}
         >
           <Check size={15} />
           <span>确认</span>
@@ -138,6 +170,13 @@ function ConfirmationActions({
       </div>
     </div>
   );
+}
+
+function confirmationSongsForDisplay(confirmation: ChatConfirmationState): Song[] {
+  if (confirmation.songs?.length) {
+    return confirmation.songs;
+  }
+  return confirmation.song ? [confirmation.song] : [];
 }
 
 function MusioWaveLoading() {

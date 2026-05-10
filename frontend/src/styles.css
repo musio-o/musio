@@ -6458,6 +6458,7 @@ canvas.magnetic-dot-field::before {
 .workspace-workbench .agent-workspace .chat-confirmation-copy {
   display: grid;
   gap: 4px;
+  grid-column: 1 / -1;
   min-width: 0;
 }
 
@@ -6479,6 +6480,55 @@ canvas.magnetic-dot-field::before {
 .workspace-workbench .agent-workspace .chat-confirmation-actions {
   display: flex;
   gap: 8px;
+  justify-content: flex-end;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-options {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 7px;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid rgba(232, 232, 232, 0.12);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(245, 245, 245, 0.82);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-option.selected {
+  border-color: rgba(126, 231, 196, 0.3);
+  background: rgba(126, 231, 196, 0.08);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-option input {
+  width: 14px;
+  height: 14px;
+  accent-color: rgb(126, 231, 196);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-option span,
+.workspace-workbench .agent-workspace .chat-confirmation-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-option span {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-option small {
+  color: rgba(232, 232, 232, 0.46);
+  font-family: var(--font-data);
+  font-size: 10px;
 }
 
 .workspace-workbench .agent-workspace .chat-confirmation-actions button {

@@ -23,6 +23,7 @@ export type TraceStep = {
 
 export type ChatConfirmationState = ChatConfirmation & {
   status?: "pending" | "confirmed" | "cancelled";
+  selectedSongIds?: string[];
 };
 
 export type ChatMessage = {

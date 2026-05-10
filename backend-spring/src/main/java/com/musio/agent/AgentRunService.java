@@ -133,10 +133,14 @@ public class AgentRunService {
         if (!"local_playlist_add".equals(confirmation.type())) {
             return null;
         }
-        String pendingSongId = taskMemory.pendingLocalPlaylistAdd().song() == null
-                ? ""
-                : taskMemory.pendingLocalPlaylistAdd().song().id();
-        String confirmationSongId = confirmation.song() == null ? "" : confirmation.song().id();
-        return !pendingSongId.isBlank() && pendingSongId.equals(confirmationSongId) ? confirmation : null;
+        List<String> pendingSongIds = taskMemory.pendingLocalPlaylistAdd().songs().stream()
+                .map(song -> song.id() == null ? "" : song.id())
+                .filter(id -> !id.isBlank())
+                .toList();
+        List<String> confirmationSongIds = confirmation.songs().stream()
+                .map(song -> song.id() == null ? "" : song.id())
+                .filter(id -> !id.isBlank())
+                .toList();
+        return !pendingSongIds.isEmpty() && !confirmationSongIds.isEmpty() && pendingSongIds.containsAll(confirmationSongIds) ? confirmation : null;
     }
 }
