@@ -12,6 +12,7 @@ import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.AgentToolFailure;
 import com.musio.model.Song;
@@ -204,6 +205,7 @@ public class AgentStepPlanner {
                 - recommend_songs 会先生成具体歌曲候选，再精确匹配真实歌曲；它的 songs observation 可作为后续评论、歌词、详情或收藏的 songId 来源。
                 - recommend_songs.request 应保留用户完整推荐需求；count 应等于本轮推荐总数，未明确时默认 5。
                 - 如果 Agent Goal 里有 recommendationSlots，recommend_songs.arguments 必须带 slots 原样传递，并让 count 等于这些 slots 的 count 总和；不要把多目标推荐压成单个“一首”。
+                - 当前任务记忆里的 recentRecommendedSongs 是近期已推荐歌曲；普通连续推荐应优先避免重复。用户明确点名、要求经典代表作、或继续讨论同一首时，可以允许重复。
                 - recommend_songs observation 会提供 requestedTotal、resolvedTotal、slotResults、songs、unresolved；推荐是否完成必须以这些结构化覆盖度为准。
                 - 如果 recommend_songs 已成功返回足够 songs / slotResults 已覆盖所有 slots，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
@@ -284,6 +286,13 @@ public class AgentStepPlanner {
         if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
             appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
         }
+        if (memory.recentRecommendedSongs() != null && !memory.recentRecommendedSongs().isEmpty()) {
+            appendLine(builder, "recentRecommendedSongs", String.join("；", memory.recentRecommendedSongs().stream()
+                    .limit(12)
+                    .map(this::recentRecommendationSummary)
+                    .filter(summary -> !summary.isBlank())
+                    .toList()));
+        }
         if (memory.lastToolFailures() != null && !memory.lastToolFailures().isEmpty()) {
             appendLine(builder, "lastToolFailures", String.join("；", memory.lastToolFailures().stream()
                     .limit(3)
@@ -344,6 +353,15 @@ public class AgentStepPlanner {
             return "";
         }
         return "%s: %s".formatted(safe(failure.toolName()), safe(failure.message())).strip();
+    }
+
+    private String recentRecommendationSummary(AgentRecentRecommendedSong recommendation) {
+        if (recommendation == null || recommendation.title().isBlank()) {
+            return "";
+        }
+        String artists = recommendation.artists().isEmpty() ? "" : " - " + String.join("/", recommendation.artists());
+        String slot = recommendation.slotId().isBlank() ? "" : " slot=" + recommendation.slotId();
+        return recommendation.title() + artists + slot;
     }
 
     private void logAction(String stage, MusioConfig.Ai ai, AgentStepAction action, String source) {

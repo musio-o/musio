@@ -6,6 +6,7 @@ import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.events.AgentEventBus;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.model.AgentEvent;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Comment;
 import com.musio.model.LoginStartResult;
@@ -62,6 +63,7 @@ class RecommendationOrchestratorTest {
         assertTrue(response.answerText().contains("《安静》- 周杰伦"));
         assertFalse(response.answerText().contains("不存在的歌》"));
         assertEquals(List.of("安静"), taskMemory.songTitles);
+        assertEquals(List.of("安静"), taskMemory.recentRecommendationTitles);
         assertTrue(events.stream().anyMatch(event -> "trace_step".equals(event.type())));
         AgentEvent resolveTrace = events.stream()
                 .filter(event -> "trace_step".equals(event.type()))
@@ -126,6 +128,7 @@ class RecommendationOrchestratorTest {
 
     private static final class RecordingTaskMemoryService extends AgentTaskMemoryService {
         private List<String> songTitles = List.of();
+        private List<String> recentRecommendationTitles = List.of();
 
         private RecordingTaskMemoryService() {
             super(null);
@@ -134,6 +137,12 @@ class RecommendationOrchestratorTest {
         @Override
         public AgentTaskMemory recordResultSongs(String userId, List<Song> songs) {
             songTitles = songs.stream().map(Song::title).toList();
+            return AgentTaskMemory.empty(userId);
+        }
+
+        @Override
+        public AgentTaskMemory recordRecentRecommendations(String userId, List<AgentRecentRecommendedSong> recommendations) {
+            recentRecommendationTitles = recommendations.stream().map(AgentRecentRecommendedSong::title).toList();
             return AgentTaskMemory.empty(userId);
         }
     }

@@ -13,6 +13,7 @@ import com.musio.agent.recommendation.RecommendationSlotResult;
 import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.config.MusioConfig;
 import com.musio.config.MusioConfigService;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.Song;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -208,6 +209,9 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
         if (state != null && state.goal() != null) {
             values.addAll(state.goal().avoidSongTitles());
         }
+        if (shouldAvoidRecentRecommendations(state)) {
+            values.addAll(recentRecommendedTitles(state));
+        }
         if (state != null) {
             state.observations().stream()
                     .filter(observation -> observation.status() == AgentObservationStatus.SUCCESS)
@@ -223,6 +227,43 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
                 .distinct()
                 .limit(20)
                 .toList();
+    }
+
+    private boolean shouldAvoidRecentRecommendations(AgentLoopState state) {
+        if (state == null || state.taskMemory() == null || state.taskMemory().recentRecommendedSongs().isEmpty()) {
+            return false;
+        }
+        String request = normalizeText((state.goal() == null ? "" : state.goal().effectiveRequest()) + " " + state.userMessage());
+        if (request.isBlank()) {
+            return true;
+        }
+        if (containsAny(request, "经典", "代表作", "最火", "最有名", "刚才那首", "上一首", "这首", "同一首", "就要", "还是")) {
+            return false;
+        }
+        return state.taskMemory().recentRecommendedSongs().stream()
+                .filter(item -> item != null && !item.title().isBlank())
+                .noneMatch(item -> request.contains(normalizeText(item.title())));
+    }
+
+    private List<String> recentRecommendedTitles(AgentLoopState state) {
+        if (state == null || state.taskMemory() == null || state.taskMemory().recentRecommendedSongs().isEmpty()) {
+            return List.of();
+        }
+        return state.taskMemory().recentRecommendedSongs().stream()
+                .filter(item -> item != null && !item.title().isBlank())
+                .map(AgentRecentRecommendedSong::title)
+                .distinct()
+                .limit(20)
+                .toList();
+    }
+
+    private boolean containsAny(String value, String... needles) {
+        for (String needle : needles) {
+            if (value.contains(needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private List<RecommendationSlot> requestedSlots(Map<String, Object> arguments, AgentLoopState state) {

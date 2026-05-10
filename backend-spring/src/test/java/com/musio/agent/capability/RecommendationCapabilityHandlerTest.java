@@ -11,11 +11,13 @@ import com.musio.agent.recommendation.RecommendationResult;
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.ResolvedRecommendation;
 import com.musio.config.MusioConfig;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.ProviderType;
 import com.musio.model.Song;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -193,7 +195,85 @@ class RecommendationCapabilityHandlerTest {
         ).valid());
     }
 
+    @Test
+    void avoidsRecentRecommendationsByDefault() {
+        StubRecommendationOrchestrator orchestrator = new StubRecommendationOrchestrator();
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                orchestrator,
+                null,
+                objectMapper
+        );
+
+        handler.execute(
+                new AgentLoopState(
+                        "run-1",
+                        "local",
+                        "再推荐一首周杰伦的歌",
+                        List.of(),
+                        memoryWithRecentRecommendation("安静"),
+                        List.of(),
+                        0
+                ),
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of("request", "再推荐一首周杰伦的歌", "count", 1)
+        ).orElseThrow();
+
+        assertTrue(orchestrator.lastAvoidSongTitles.contains("安静"));
+    }
+
+    @Test
+    void allowsRecentRecommendationWhenUserExplicitlyAsksForClassic() {
+        StubRecommendationOrchestrator orchestrator = new StubRecommendationOrchestrator();
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                orchestrator,
+                null,
+                objectMapper
+        );
+
+        handler.execute(
+                new AgentLoopState(
+                        "run-1",
+                        "local",
+                        "推荐一首周杰伦经典代表作",
+                        List.of(),
+                        memoryWithRecentRecommendation("安静"),
+                        List.of(),
+                        0
+                ),
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of("request", "推荐一首周杰伦经典代表作", "count", 1)
+        ).orElseThrow();
+
+        assertFalse(orchestrator.lastAvoidSongTitles.contains("安静"));
+    }
+
+    private AgentTaskMemory memoryWithRecentRecommendation(String title) {
+        return new AgentTaskMemory(
+                "local",
+                "music-agent-task",
+                "",
+                "",
+                null,
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                "",
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(),
+                List.of(new AgentRecentRecommendedSong("qqmusic:quiet", title, List.of("周杰伦"), "", "上一轮推荐", "", "run-0", "soft_avoid", Instant.now())),
+                null,
+                Instant.now()
+        );
+    }
+
     private static final class StubRecommendationOrchestrator extends RecommendationOrchestrator {
+        private List<String> lastAvoidSongTitles = List.of();
+
         private StubRecommendationOrchestrator() {
             super(null, null, null, null);
         }
@@ -206,6 +286,7 @@ class RecommendationCapabilityHandlerTest {
                 List<String> avoidSongTitles,
                 AgentTaskMemory taskMemory
         ) {
+            lastAvoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
             Song song = new Song("qqmusic:quiet", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 334, null);
             ResolvedRecommendation resolved = new ResolvedRecommendation(song, "钢琴和慢速旋律适合深夜专注。", "安静 周杰伦");
             RecommendationResult result = new RecommendationResult(
@@ -224,6 +305,7 @@ class RecommendationCapabilityHandlerTest {
                 List<String> avoidSongTitles,
                 AgentTaskMemory taskMemory
         ) {
+            lastAvoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
             Song one = new Song("qqmusic:x1", ProviderType.QQMUSIC, "断桥残雪", List.of("许嵩"), "自定义", 240, null);
             Song two = new Song("qqmusic:x2", ProviderType.QQMUSIC, "清明雨上", List.of("许嵩"), "自定义", 240, null);
             Song three = new Song("qqmusic:h1", ProviderType.QQMUSIC, "西厢", List.of("后弦"), "自定义", 240, null);

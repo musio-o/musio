@@ -11,7 +11,9 @@ import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.AgentToolFailure;
 import com.musio.model.Song;
 import org.slf4j.Logger;
@@ -135,6 +137,7 @@ public class AgentTurnPlanner {
             AgentTurnMemoryUse memoryUse = parseMemoryUse(root.path("memoryUse"));
             List<AgentRequiredOutcome> requiredOutcomes = parseRequiredOutcomes(root.path("requiredOutcomes"));
             List<RecommendationSlot> recommendationSlots = parseRecommendationSlots(root.path("recommendationSlots"));
+            List<String> avoidSongTitles = textArray(root.path("avoidSongTitles"));
             List<AgentToolCall> calls = parseCalls(root.path("toolCalls"));
             if (calls.isEmpty() && root.path("calls").isArray()) {
                 calls = parseCalls(root.path("calls"));
@@ -143,6 +146,7 @@ public class AgentTurnPlanner {
                 calls = List.of();
                 requiredOutcomes = List.of();
                 recommendationSlots = List.of();
+                avoidSongTitles = List.of();
             }
             if (disposition == TurnDisposition.USE_TOOLS && calls.isEmpty() && !isLoopTaskType(taskType)) {
                 return Optional.of(AgentTurnPlan.respondOnly(
@@ -161,7 +165,8 @@ public class AgentTurnPlanner {
                     requiredOutcomes,
                     recommendationSlots,
                     confidence,
-                    ""
+                    "",
+                    avoidSongTitles
             ));
         } catch (Exception e) {
             return Optional.empty();
@@ -311,7 +316,7 @@ public class AgentTurnPlanner {
                 %s
 
                 输出格式：
-                {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"requiredOutcomes":["recommendation|search|comments|lyrics|detail|playlist|profile|playback|local_playlist_write|account_write"],"recommendationSlots":[{"slotId":"稳定短 id","targetType":"artist|genre|scene|song|other","target":"推荐目标","count":数量}],"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
+                {"disposition":"respond_only|use_tools|request_confirmation|unsupported","taskType":"chat|search|recommend|comments|lyrics|detail|playlist|profile|playback|unknown","contextMode":"new_task|follow_up|retry|refer_previous_song|correction","effectiveRequest":"用于本轮执行的完整请求","memoryUse":{"usesTaskMemory":true|false,"usedFields":["lastSearchKeyword"],"reason":"为什么需要或不需要短期任务记忆"},"requiredOutcomes":["recommendation|search|comments|lyrics|detail|playlist|profile|playback|local_playlist_write|account_write"],"recommendationSlots":[{"slotId":"稳定短 id","targetType":"artist|genre|scene|song|other","target":"推荐目标","count":数量}],"avoidSongTitles":["本轮要排除的上轮歌曲名"],"toolCalls":[{"toolName":"工具名","arguments":{}}],"confidence":0.0到1.0}
 
                 规则：
                 - requiredOutcomes 是本轮目标完成条件，必须覆盖用户要求的所有结果；普通聊天填 []。
@@ -321,12 +326,15 @@ public class AgentTurnPlanner {
                 - recommend_songs 是 StepLoop 内部推荐能力，Turn Planner 不要输出它；开放推荐只需要 disposition=use_tools、taskType=recommend、toolCalls=[]。
                 - 普通寒暄、感谢、确认、情绪表达且不需要音乐能力时，输出 disposition=respond_only、taskType=chat、toolCalls=[]。
                 - 当前用户输入优先级最高；任务记忆只用于恢复搜索目标、上一轮结果和排除项，不用于默认继承旧数量。
+                - recentRecommendedSongs 表示近期已经推荐给用户的歌；普通连续推荐应优先避免重复，除非用户明确点名、要求经典代表作、或继续讨论同一首。
                 - 搜索歌曲、推荐歌曲、歌词、评论、歌单、歌手、专辑、播放前发现歌曲等音乐相关请求，应输出 disposition=use_tools。
                 - 开放推荐、场景推荐、风格推荐应输出 taskType=recommend，requiredOutcomes 至少包含 recommendation，toolCalls 可以为空；由 StepLoop 在可用能力内决定是否搜索歌曲、读取画像或继续补充证据。
                 - 复合任务必须把后续目标写进 requiredOutcomes；例如“推荐一首并获取热评”填 ["recommendation","comments"]，“推荐一首并分享歌词再加入歌单”填 ["recommendation","lyrics","local_playlist_write"]。
                 - 精确搜歌、歌手搜索、替换已有候选、播放前查找候选时使用 search_songs，taskType=search。
                 - taskType 必须描述本轮主能力：查找/替换候选歌曲使用 search；开放推荐、场景推荐、风格推荐使用 recommend。
                 - 如果用户在纠正上一轮音乐搜索目标，例如说明刚才的歌手、歌名或关键词说错了，使用 contextMode=correction，并基于纠正后的正向目标规划 search_songs。
+                - 如果用户指出上一轮推荐歌曲重复、已经推荐过、需要换掉某一首，使用 contextMode=correction、taskType=recommend、memoryUse.usesTaskMemory=true，usedFields 包含 lastResultSongs、lastRecommendationSlots、lastRequiredOutcomes；recommendationSlots 只填写需要替换的那个 slot，count=1，avoidSongTitles 填入应排除的上轮歌曲名。
+                - 推荐纠错时不要直接回答“抱歉我换一首”为普通聊天；只要需要新歌、热评、歌词或加入歌单，就必须 use_tools，由 StepLoop 重新产生 observation。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.arguments.limit 必须显式填写。根据当前用户输入和 effectiveRequest 的数量含义填写；只有当前请求完全没有数量含义时才用默认 5。
                 - 用户说“一首/1首/一个/一支/一曲”时，如果 toolCalls 中包含 search_songs，limit 必须填 1，不能使用默认 5。
@@ -402,6 +410,11 @@ public class AgentTurnPlanner {
                 && (memory.lastResultSongs() == null || memory.lastResultSongs().isEmpty())
                 && (memory.lastResultSongTitles() == null || memory.lastResultSongTitles().isEmpty())
                 && (memory.avoidSongTitles() == null || memory.avoidSongTitles().isEmpty())
+                && (memory.lastRequiredOutcomes() == null || memory.lastRequiredOutcomes().isEmpty())
+                && (memory.lastRecommendationSlots() == null || memory.lastRecommendationSlots().isEmpty())
+                && (memory.lastEvidenceTools() == null || memory.lastEvidenceTools().isEmpty())
+                && (memory.lastWriteIntentTools() == null || memory.lastWriteIntentTools().isEmpty())
+                && (memory.recentRecommendedSongs() == null || memory.recentRecommendedSongs().isEmpty())
                 && (memory.lastToolFailures() == null || memory.lastToolFailures().isEmpty()))) {
             return "无";
         }
@@ -422,6 +435,29 @@ public class AgentTurnPlanner {
         appendLine(builder, "lastCompletedTaskType", memory.lastCompletedTaskType());
         if (memory.lastObservationSummaries() != null && !memory.lastObservationSummaries().isEmpty()) {
             appendLine(builder, "lastObservationSummaries", String.join("；", memory.lastObservationSummaries().stream().limit(5).toList()));
+        }
+        if (memory.lastRequiredOutcomes() != null && !memory.lastRequiredOutcomes().isEmpty()) {
+            appendLine(builder, "lastRequiredOutcomes", String.join("、", memory.lastRequiredOutcomes().stream().limit(10).toList()));
+        }
+        if (memory.lastRecommendationSlots() != null && !memory.lastRecommendationSlots().isEmpty()) {
+            appendLine(builder, "lastRecommendationSlots", String.join("；", memory.lastRecommendationSlots().stream()
+                    .limit(6)
+                    .map(this::recommendationSlotSummary)
+                    .filter(summary -> !summary.isBlank())
+                    .toList()));
+        }
+        if (memory.lastEvidenceTools() != null && !memory.lastEvidenceTools().isEmpty()) {
+            appendLine(builder, "lastEvidenceTools", String.join("、", memory.lastEvidenceTools().stream().limit(10).toList()));
+        }
+        if (memory.lastWriteIntentTools() != null && !memory.lastWriteIntentTools().isEmpty()) {
+            appendLine(builder, "lastWriteIntentTools", String.join("、", memory.lastWriteIntentTools().stream().limit(10).toList()));
+        }
+        if (memory.recentRecommendedSongs() != null && !memory.recentRecommendedSongs().isEmpty()) {
+            appendLine(builder, "recentRecommendedSongs", String.join("；", memory.recentRecommendedSongs().stream()
+                    .limit(12)
+                    .map(this::recentRecommendationSummary)
+                    .filter(summary -> !summary.isBlank())
+                    .toList()));
         }
         if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
             appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
@@ -458,6 +494,22 @@ public class AgentTurnPlanner {
             return "";
         }
         return "%s: %s".formatted(safe(failure.toolName()), safe(failure.message())).strip();
+    }
+
+    private String recommendationSlotSummary(AgentTaskRecommendationSlot slot) {
+        if (slot == null || slot.slotId().isBlank()) {
+            return "";
+        }
+        String songs = slot.songTitles().isEmpty() ? "无已命中歌曲" : String.join("/", slot.songTitles());
+        return "%s:%s=%s x%s -> %s".formatted(slot.slotId(), slot.targetType(), slot.target(), slot.requestedCount(), songs);
+    }
+
+    private String recentRecommendationSummary(AgentRecentRecommendedSong recommendation) {
+        if (recommendation == null || recommendation.title().isBlank()) {
+            return "";
+        }
+        String artists = recommendation.artists().isEmpty() ? "" : " - " + String.join("/", recommendation.artists());
+        return recommendation.title() + artists;
     }
 
     private String toolNames(List<AgentToolCall> calls) {

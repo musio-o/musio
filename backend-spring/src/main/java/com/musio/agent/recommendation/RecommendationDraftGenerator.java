@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentLlmLogger;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.memory.MusicProfileService;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.MusicProfileMemory;
@@ -86,7 +87,7 @@ public class RecommendationDraftGenerator {
                     .call()
                     .content();
             AgentLlmLogger.logResponse("recommendation_draft", ai, content);
-            return parseDraft(content, count);
+            return filterAvoidedTitles(parseDraft(content, count), avoidSongTitles);
         } catch (Exception e) {
             log.warn("Recommendation draft generation failed", e);
             return Optional.empty();
@@ -143,7 +144,7 @@ public class RecommendationDraftGenerator {
                     .call()
                     .content();
             AgentLlmLogger.logResponse("recommendation_draft", ai, content);
-            return parseDraft(content, count, slots);
+            return filterAvoidedTitles(parseDraft(content, count, slots), avoidSongTitles);
         } catch (Exception e) {
             log.warn("Recommendation draft generation failed", e);
             return Optional.empty();
@@ -233,9 +234,30 @@ public class RecommendationDraftGenerator {
                 - 推荐理由要根据用户当前请求和音乐画像写，不要声称已经搜索或播放。
                 - title 和 artist 必须是可用于音乐平台搜索的真实歌曲信息。
                 - 避免重复“本轮应避免重复的歌名”。
+                - recentRecommendedSongs 代表近期已经推荐过的歌曲；普通连续推荐不要重复它们。用户明确点名、要求经典代表作、或继续讨论同一首时，可以有意重复。
                 - candidates 数量尽量等于需要推荐数量。
                 - 不要输出 chain-of-thought。
                 """;
+    }
+
+    private Optional<RecommendationDraft> filterAvoidedTitles(Optional<RecommendationDraft> draft, List<String> avoidSongTitles) {
+        if (draft.isEmpty() || avoidSongTitles == null || avoidSongTitles.isEmpty()) {
+            return draft;
+        }
+        Set<String> avoided = avoidSongTitles.stream()
+                .map(this::normalizeTitle)
+                .filter(value -> !value.isBlank())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (avoided.isEmpty()) {
+            return draft;
+        }
+        List<RecommendationCandidate> candidates = draft.get().candidates().stream()
+                .filter(candidate -> candidate != null && !avoided.contains(normalizeTitle(candidate.title())))
+                .toList();
+        if (candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of(new RecommendationDraft(candidates, draft.get().confidence(), draft.get().source()));
     }
 
     private String musicProfilePreview() {
@@ -272,7 +294,23 @@ public class RecommendationDraftGenerator {
         if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
             parts.add("lastResultSongTitles: " + String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
         }
+        if (memory.recentRecommendedSongs() != null && !memory.recentRecommendedSongs().isEmpty()) {
+            parts.add("recentRecommendedSongs: " + String.join("；", memory.recentRecommendedSongs().stream()
+                    .limit(15)
+                    .map(this::recentRecommendationSummary)
+                    .filter(summary -> !summary.isBlank())
+                    .toList()));
+        }
         return parts.isEmpty() ? "无" : String.join("\n", parts);
+    }
+
+    private String recentRecommendationSummary(AgentRecentRecommendedSong recommendation) {
+        if (recommendation == null || recommendation.title().isBlank()) {
+            return "";
+        }
+        String artists = recommendation.artists().isEmpty() ? "" : " - " + String.join("/", recommendation.artists());
+        String slot = recommendation.slotId().isBlank() ? "" : " slot=" + recommendation.slotId();
+        return recommendation.title() + artists + slot;
     }
 
     private String slotPreview(List<RecommendationSlot> slots) {
@@ -340,6 +378,12 @@ public class RecommendationDraftGenerator {
 
     private String normalizeKey(String value) {
         return safe(value).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private String normalizeTitle(String value) {
+        return safe(value)
+                .toLowerCase(java.util.Locale.ROOT)
+                .replaceAll("[《》<>\\[\\]【】()（）\\s，,。！？!?；;：:\"'“”‘’、]+", "");
     }
 
     private String safe(String value) {

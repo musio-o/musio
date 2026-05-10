@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.AgentToolFailure;
 import com.musio.model.Song;
 import org.slf4j.Logger;
@@ -222,6 +224,31 @@ public class AgentTaskContextResolver {
         if (memory.lastObservationSummaries() != null && !memory.lastObservationSummaries().isEmpty()) {
             appendLine(builder, "lastObservationSummaries", String.join("；", memory.lastObservationSummaries().stream().limit(5).toList()));
         }
+        if (memory.lastRequiredOutcomes() != null && !memory.lastRequiredOutcomes().isEmpty()) {
+            appendLine(builder, "lastRequiredOutcomes", String.join("、", memory.lastRequiredOutcomes().stream().limit(10).toList()));
+        }
+        if (memory.lastRecommendationSlots() != null && !memory.lastRecommendationSlots().isEmpty()) {
+            appendLine(builder, "lastRecommendationSlots", memory.lastRecommendationSlots().stream()
+                    .limit(6)
+                    .map(this::recommendationSlotSummary)
+                    .filter(summary -> !summary.isBlank())
+                    .reduce((left, right) -> left + "；" + right)
+                    .orElse(""));
+        }
+        if (memory.lastEvidenceTools() != null && !memory.lastEvidenceTools().isEmpty()) {
+            appendLine(builder, "lastEvidenceTools", String.join("、", memory.lastEvidenceTools().stream().limit(10).toList()));
+        }
+        if (memory.lastWriteIntentTools() != null && !memory.lastWriteIntentTools().isEmpty()) {
+            appendLine(builder, "lastWriteIntentTools", String.join("、", memory.lastWriteIntentTools().stream().limit(10).toList()));
+        }
+        if (memory.recentRecommendedSongs() != null && !memory.recentRecommendedSongs().isEmpty()) {
+            appendLine(builder, "recentRecommendedSongs", memory.recentRecommendedSongs().stream()
+                    .limit(12)
+                    .map(this::recentRecommendationSummary)
+                    .filter(summary -> !summary.isBlank())
+                    .reduce((left, right) -> left + "；" + right)
+                    .orElse(""));
+        }
         if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
             appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
         } else if (memory.lastResultSongs() != null && !memory.lastResultSongs().isEmpty()) {
@@ -279,6 +306,14 @@ public class AgentTaskContextResolver {
             if (memory.lastResultSongTitles() != null && !memory.lastResultSongTitles().isEmpty()) {
                 appendLine(builder, "lastResultSongTitles", String.join("、", memory.lastResultSongTitles().stream().limit(10).toList()));
             }
+            if (memory.lastRecommendationSlots() != null && !memory.lastRecommendationSlots().isEmpty()) {
+                appendLine(builder, "lastRecommendationSlots", memory.lastRecommendationSlots().stream()
+                        .limit(6)
+                        .map(this::recommendationSlotSummary)
+                        .filter(summary -> !summary.isBlank())
+                        .reduce((left, right) -> left + "；" + right)
+                        .orElse(""));
+            }
         }
         if (access.useAvoidTitles() && memory.avoidSongTitles() != null && !memory.avoidSongTitles().isEmpty()) {
             appendLine(builder, "avoidSongTitles", String.join("、", memory.avoidSongTitles()));
@@ -316,6 +351,11 @@ public class AgentTaskContextResolver {
                 && memory.lastTargetSong() == null
                 && isBlank(memory.lastCompletedTaskType())
                 && (memory.lastObservationSummaries() == null || memory.lastObservationSummaries().isEmpty())
+                && (memory.lastRequiredOutcomes() == null || memory.lastRequiredOutcomes().isEmpty())
+                && (memory.lastRecommendationSlots() == null || memory.lastRecommendationSlots().isEmpty())
+                && (memory.lastEvidenceTools() == null || memory.lastEvidenceTools().isEmpty())
+                && (memory.lastWriteIntentTools() == null || memory.lastWriteIntentTools().isEmpty())
+                && (memory.recentRecommendedSongs() == null || memory.recentRecommendedSongs().isEmpty())
                 && (memory.lastToolFailures() == null || memory.lastToolFailures().isEmpty());
     }
 
@@ -330,6 +370,22 @@ public class AgentTaskContextResolver {
             return "";
         }
         return failure.toolName() + ": " + truncate(failure.message());
+    }
+
+    private String recommendationSlotSummary(AgentTaskRecommendationSlot slot) {
+        if (slot == null || slot.slotId().isBlank()) {
+            return "";
+        }
+        String songs = slot.songTitles().isEmpty() ? "无已命中歌曲" : String.join("/", slot.songTitles());
+        return "%s:%s=%s x%s -> %s".formatted(slot.slotId(), slot.targetType(), slot.target(), slot.requestedCount(), songs);
+    }
+
+    private String recentRecommendationSummary(AgentRecentRecommendedSong recommendation) {
+        if (recommendation == null || recommendation.title().isBlank()) {
+            return "";
+        }
+        String artists = recommendation.artists().isEmpty() ? "" : " - " + String.join("/", recommendation.artists());
+        return recommendation.title() + artists;
     }
 
     private boolean isBlank(String value) {
@@ -698,7 +754,8 @@ record AgentTaskContext(
     }
 
     boolean preservePreviousSongContext() {
-        return "comments".equals(taskType)
+        return "correction".equals(contextMode)
+                || "comments".equals(taskType)
                 || "lyrics".equals(taskType)
                 || "detail".equals(taskType)
                 || "playback".equals(taskType);

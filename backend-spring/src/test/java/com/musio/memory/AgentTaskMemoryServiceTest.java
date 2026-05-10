@@ -1,7 +1,9 @@
 package com.musio.memory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.ProviderType;
 import com.musio.model.Song;
@@ -90,6 +92,89 @@ class AgentTaskMemoryServiceTest {
         assertEquals("qqmusic:1", memory.lastTargetSong().id());
         assertEquals("comments", memory.lastCompletedTaskType());
         assertEquals(2, memory.lastObservationSummaries().size());
+    }
+
+    @Test
+    void recordsStructuredEvidenceAndPreservesItForCorrection() {
+        AgentTaskMemoryService service = service();
+        Song song = new Song("qqmusic:h1", ProviderType.QQMUSIC, "西厢", List.of("后弦"), "自定义", 240, null);
+
+        service.recordTask("local", "推荐一首后弦的歌", "", null, List.of());
+        service.recordResultSongs("local", List.of(song));
+        service.recordStructuredEvidence(
+                "local",
+                List.of("RECOMMENDATION", "COMMENTS", "LOCAL_PLAYLIST_WRITE"),
+                List.of(new AgentTaskRecommendationSlot("houxian", "artist", "后弦", 1, List.of("qqmusic:h1"), List.of("西厢"))),
+                List.of("recommend_songs", "get_hot_comments", "add_song_to_musio_playlist"),
+                List.of("add_song_to_musio_playlist")
+        );
+
+        service.recordTask("local", "修正上一轮推荐，替换《西厢》", "", null, List.of("西厢"), true);
+
+        AgentTaskMemory memory = service.read("local");
+        assertEquals(List.of("RECOMMENDATION", "COMMENTS", "LOCAL_PLAYLIST_WRITE"), memory.lastRequiredOutcomes());
+        assertEquals("houxian", memory.lastRecommendationSlots().getFirst().slotId());
+        assertEquals(List.of("西厢"), memory.avoidSongTitles());
+        assertEquals("qqmusic:h1", memory.lastResultSongs().getFirst().id());
+    }
+
+    @Test
+    void clearsStructuredEvidenceForUnrelatedNewTask() {
+        AgentTaskMemoryService service = service();
+        service.recordStructuredEvidence(
+                "local",
+                List.of("RECOMMENDATION"),
+                List.of(new AgentTaskRecommendationSlot("houxian", "artist", "后弦", 1, List.of("qqmusic:h1"), List.of("西厢"))),
+                List.of("recommend_songs"),
+                List.of()
+        );
+
+        service.recordTask("local", "搜索周杰伦", "周杰伦", 1, List.of(), false);
+
+        AgentTaskMemory memory = service.read("local");
+        assertTrue(memory.lastRequiredOutcomes().isEmpty());
+        assertTrue(memory.lastRecommendationSlots().isEmpty());
+        assertTrue(memory.lastEvidenceTools().isEmpty());
+    }
+
+    @Test
+    void recordsRecentRecommendationsAndPreservesThemAcrossNewTasks() {
+        AgentTaskMemoryService service = service();
+
+        service.recordRecentRecommendations("local", List.of(
+                new AgentRecentRecommendedSong(
+                        "qqmusic:h1",
+                        "西厢",
+                        List.of("后弦"),
+                        "houxian",
+                        "推荐一首后弦的歌",
+                        "代表作",
+                        "run-1",
+                        "soft_avoid",
+                        java.time.Instant.now()
+                )
+        ));
+        service.recordTask("local", "推荐一首许嵩的歌", "", null, List.of(), false);
+
+        AgentTaskMemory memory = service.read("local");
+        assertEquals(1, memory.recentRecommendedSongs().size());
+        assertEquals("西厢", memory.recentRecommendedSongs().getFirst().title());
+    }
+
+    @Test
+    void dedupesRecentRecommendationsBySongIdWithNewestFirst() {
+        AgentTaskMemoryService service = service();
+
+        service.recordRecentRecommendations("local", List.of(
+                new AgentRecentRecommendedSong("qqmusic:h1", "西厢", List.of("后弦"), "houxian", "第一次", "", "run-1", "soft_avoid", java.time.Instant.now())
+        ));
+        service.recordRecentRecommendations("local", List.of(
+                new AgentRecentRecommendedSong("qqmusic:h1", "西厢", List.of("后弦"), "houxian", "第二次", "", "run-2", "soft_avoid", java.time.Instant.now())
+        ));
+
+        AgentTaskMemory memory = service.read("local");
+        assertEquals(1, memory.recentRecommendedSongs().size());
+        assertEquals("run-2", memory.recentRecommendedSongs().getFirst().runId());
     }
 
     @Test

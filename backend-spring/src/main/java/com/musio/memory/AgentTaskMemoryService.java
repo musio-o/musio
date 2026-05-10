@@ -1,7 +1,9 @@
 package com.musio.memory;
 
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.AgentToolFailure;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import org.springframework.stereotype.Service;
@@ -15,6 +17,10 @@ public class AgentTaskMemoryService {
     private static final int MAX_RESULT_SONGS = 20;
     private static final int MAX_FAILURES = 5;
     private static final int MAX_OBSERVATION_SUMMARIES = 8;
+    private static final int MAX_REQUIRED_OUTCOMES = 12;
+    private static final int MAX_RECOMMENDATION_SLOTS = 10;
+    private static final int MAX_EVIDENCE_TOOLS = 12;
+    private static final int MAX_RECENT_RECOMMENDATIONS = 50;
 
     private final AgentTaskMemoryStore store;
 
@@ -60,6 +66,11 @@ public class AgentTaskMemoryService {
                 preservePreviousSongContext ? previous.lastTargetSong() : null,
                 preservePreviousSongContext ? previous.lastCompletedTaskType() : "",
                 preservePreviousSongContext ? previous.lastObservationSummaries() : List.of(),
+                preservePreviousSongContext ? previous.lastRequiredOutcomes() : List.of(),
+                preservePreviousSongContext ? previous.lastRecommendationSlots() : List.of(),
+                preservePreviousSongContext ? previous.lastEvidenceTools() : List.of(),
+                preservePreviousSongContext ? previous.lastWriteIntentTools() : List.of(),
+                previous.recentRecommendedSongs(),
                 previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
@@ -89,6 +100,11 @@ public class AgentTaskMemoryService {
                 limitedSongs.isEmpty() ? previous.lastTargetSong() : limitedSongs.getFirst(),
                 previous.lastCompletedTaskType(),
                 previous.lastObservationSummaries(),
+                previous.lastRequiredOutcomes(),
+                previous.lastRecommendationSlots(),
+                previous.lastEvidenceTools(),
+                previous.lastWriteIntentTools(),
+                previous.recentRecommendedSongs(),
                 previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
@@ -111,6 +127,75 @@ public class AgentTaskMemoryService {
                 targetSong == null ? previous.lastTargetSong() : targetSong,
                 safe(completedTaskType).isBlank() ? previous.lastCompletedTaskType() : safe(completedTaskType),
                 limitedStrings(observationSummaries, MAX_OBSERVATION_SUMMARIES),
+                previous.lastRequiredOutcomes(),
+                previous.lastRecommendationSlots(),
+                previous.lastEvidenceTools(),
+                previous.lastWriteIntentTools(),
+                previous.recentRecommendedSongs(),
+                previous.pendingLocalPlaylistAdd(),
+                Instant.now()
+        );
+        store.write(userId, next);
+        return next;
+    }
+
+    public AgentTaskMemory recordStructuredEvidence(
+            String userId,
+            List<String> requiredOutcomes,
+            List<AgentTaskRecommendationSlot> recommendationSlots,
+            List<String> evidenceTools,
+            List<String> writeIntentTools
+    ) {
+        AgentTaskMemory previous = read(userId);
+        AgentTaskMemory next = new AgentTaskMemory(
+                userId,
+                previous.currentTask(),
+                previous.lastEffectiveRequest(),
+                previous.lastSearchKeyword(),
+                previous.lastSearchLimit(),
+                previous.lastResultSongs(),
+                previous.lastResultSongTitles(),
+                previous.avoidSongTitles(),
+                previous.lastToolFailures(),
+                previous.lastTargetSong(),
+                previous.lastCompletedTaskType(),
+                previous.lastObservationSummaries(),
+                limitedStrings(requiredOutcomes, MAX_REQUIRED_OUTCOMES),
+                recommendationSlots == null ? List.of() : recommendationSlots.stream()
+                        .filter(slot -> slot != null && !slot.slotId().isBlank())
+                        .limit(MAX_RECOMMENDATION_SLOTS)
+                        .toList(),
+                limitedStrings(evidenceTools, MAX_EVIDENCE_TOOLS),
+                limitedStrings(writeIntentTools, MAX_EVIDENCE_TOOLS),
+                previous.recentRecommendedSongs(),
+                previous.pendingLocalPlaylistAdd(),
+                Instant.now()
+        );
+        store.write(userId, next);
+        return next;
+    }
+
+    public AgentTaskMemory recordRecentRecommendations(String userId, List<AgentRecentRecommendedSong> recommendations) {
+        AgentTaskMemory previous = read(userId);
+        List<AgentRecentRecommendedSong> merged = mergeRecentRecommendations(recommendations, previous.recentRecommendedSongs());
+        AgentTaskMemory next = new AgentTaskMemory(
+                userId,
+                previous.currentTask(),
+                previous.lastEffectiveRequest(),
+                previous.lastSearchKeyword(),
+                previous.lastSearchLimit(),
+                previous.lastResultSongs(),
+                previous.lastResultSongTitles(),
+                previous.avoidSongTitles(),
+                previous.lastToolFailures(),
+                previous.lastTargetSong(),
+                previous.lastCompletedTaskType(),
+                previous.lastObservationSummaries(),
+                previous.lastRequiredOutcomes(),
+                previous.lastRecommendationSlots(),
+                previous.lastEvidenceTools(),
+                previous.lastWriteIntentTools(),
+                merged,
                 previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
@@ -136,6 +221,11 @@ public class AgentTaskMemoryService {
                 previous.lastTargetSong(),
                 previous.lastCompletedTaskType(),
                 previous.lastObservationSummaries(),
+                previous.lastRequiredOutcomes(),
+                previous.lastRecommendationSlots(),
+                previous.lastEvidenceTools(),
+                previous.lastWriteIntentTools(),
+                previous.recentRecommendedSongs(),
                 previous.pendingLocalPlaylistAdd(),
                 Instant.now()
         );
@@ -158,6 +248,11 @@ public class AgentTaskMemoryService {
                 pending == null || pending.song() == null ? previous.lastTargetSong() : pending.song(),
                 previous.lastCompletedTaskType(),
                 previous.lastObservationSummaries(),
+                previous.lastRequiredOutcomes(),
+                previous.lastRecommendationSlots(),
+                previous.lastEvidenceTools(),
+                previous.lastWriteIntentTools(),
+                previous.recentRecommendedSongs(),
                 pending,
                 Instant.now()
         );
@@ -180,6 +275,11 @@ public class AgentTaskMemoryService {
                 previous.lastTargetSong(),
                 previous.lastCompletedTaskType(),
                 previous.lastObservationSummaries(),
+                previous.lastRequiredOutcomes(),
+                previous.lastRecommendationSlots(),
+                previous.lastEvidenceTools(),
+                previous.lastWriteIntentTools(),
+                previous.recentRecommendedSongs(),
                 null,
                 Instant.now()
         );
@@ -205,5 +305,41 @@ public class AgentTaskMemoryService {
                 .distinct()
                 .limit(limit)
                 .toList();
+    }
+
+    private List<AgentRecentRecommendedSong> mergeRecentRecommendations(
+            List<AgentRecentRecommendedSong> newRecommendations,
+            List<AgentRecentRecommendedSong> previousRecommendations
+    ) {
+        List<AgentRecentRecommendedSong> merged = new ArrayList<>();
+        if (newRecommendations != null) {
+            merged.addAll(newRecommendations.stream()
+                    .filter(item -> item != null && (!item.songId().isBlank() || !item.title().isBlank()))
+                    .toList());
+        }
+        if (previousRecommendations != null) {
+            merged.addAll(previousRecommendations.stream()
+                    .filter(item -> item != null && (!item.songId().isBlank() || !item.title().isBlank()))
+                    .toList());
+        }
+        java.util.LinkedHashMap<String, AgentRecentRecommendedSong> byKey = new java.util.LinkedHashMap<>();
+        for (AgentRecentRecommendedSong item : merged) {
+            byKey.putIfAbsent(recommendationKey(item), item);
+        }
+        return byKey.values().stream()
+                .limit(MAX_RECENT_RECOMMENDATIONS)
+                .toList();
+    }
+
+    private String recommendationKey(AgentRecentRecommendedSong item) {
+        if (item == null) {
+            return "";
+        }
+        if (!item.songId().isBlank()) {
+            return "id:" + item.songId();
+        }
+        String artists = item.artists() == null ? "" : String.join("/", item.artists());
+        return "title:" + safe(item.title()).toLowerCase(java.util.Locale.ROOT)
+                + "|" + artists.toLowerCase(java.util.Locale.ROOT);
     }
 }

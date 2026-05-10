@@ -17,7 +17,8 @@ record AgentTurnPlan(
         List<AgentRequiredOutcome> requiredOutcomes,
         List<RecommendationSlot> recommendationSlots,
         double confidence,
-        String fallbackReason
+        String fallbackReason,
+        List<String> avoidSongTitles
 ) {
     private static final Set<String> READ_ONLY_LOOP_TOOLS = Set.of(
             "search_songs",
@@ -41,7 +42,7 @@ record AgentTurnPlan(
             double confidence,
             String fallbackReason
     ) {
-        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, List.of(), List.of(), confidence, fallbackReason);
+        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, List.of(), List.of(), confidence, fallbackReason, List.of());
     }
 
     AgentTurnPlan(
@@ -55,13 +56,29 @@ record AgentTurnPlan(
             double confidence,
             String fallbackReason
     ) {
-        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, requiredOutcomes, List.of(), confidence, fallbackReason);
+        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, requiredOutcomes, List.of(), confidence, fallbackReason, List.of());
+    }
+
+    AgentTurnPlan(
+            TurnDisposition disposition,
+            String taskType,
+            String contextMode,
+            String effectiveRequest,
+            AgentTurnMemoryUse memoryUse,
+            List<AgentToolCall> toolCalls,
+            List<AgentRequiredOutcome> requiredOutcomes,
+            List<RecommendationSlot> recommendationSlots,
+            double confidence,
+            String fallbackReason
+    ) {
+        this(disposition, taskType, contextMode, effectiveRequest, memoryUse, toolCalls, requiredOutcomes, recommendationSlots, confidence, fallbackReason, List.of());
     }
 
     AgentTurnPlan {
         toolCalls = toolCalls == null ? List.of() : List.copyOf(toolCalls);
         requiredOutcomes = requiredOutcomes == null ? List.of() : List.copyOf(requiredOutcomes);
         recommendationSlots = RecommendationSlots.normalize(recommendationSlots);
+        avoidSongTitles = cleanStrings(avoidSongTitles);
     }
 
     static AgentTurnPlan respondOnly(String effectiveRequest, double confidence, String fallbackReason) {
@@ -75,7 +92,8 @@ record AgentTurnPlan(
                 List.of(),
                 List.of(),
                 confidence,
-                safe(fallbackReason)
+                safe(fallbackReason),
+                List.of()
         );
     }
 
@@ -97,13 +115,14 @@ record AgentTurnPlan(
         ToolIntent toolIntent = firstToolIntent();
         String targetSongId = firstSongId();
         boolean followUp = List.of("follow_up", "retry", "refer_previous_song", "correction").contains(safe(contextMode));
+        List<String> excludedTitles = avoidSongTitles.isEmpty() ? toolIntent.excludedTitles() : avoidSongTitles;
         return AgentTaskContext.agent(
                 originalMessage,
                 effectiveRequest.isBlank() ? originalMessage : effectiveRequest,
                 toolIntent.keyword(),
                 toolIntent.limit(),
                 followUp,
-                toolIntent.excludedTitles(),
+                excludedTitles,
                 confidence,
                 "turn-planner",
                 effectiveTaskType(),
@@ -242,6 +261,18 @@ record AgentTurnPlan(
 
     private static String safe(String value) {
         return value == null ? "" : value.strip();
+    }
+
+    private static List<String> cleanStrings(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return List.of();
+        }
+        return values.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::strip)
+                .distinct()
+                .limit(30)
+                .toList();
     }
 
     private record ToolIntent(String keyword, int limit, List<String> excludedTitles) {

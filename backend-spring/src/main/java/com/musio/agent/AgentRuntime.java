@@ -24,6 +24,7 @@ import com.musio.model.ChatConfirmation;
 import com.musio.model.ChatRequest;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
 import com.musio.memory.AgentTaskMemoryService;
@@ -39,6 +40,8 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executors;
@@ -60,6 +63,7 @@ public class AgentRuntime {
     private final AgentTaskMemoryService taskMemoryService;
     private final AgentTracePublisher tracePublisher;
     private final AgentTurnPlanner turnPlanner;
+    private final AgentMemoryRouter memoryRouter;
     private final AgentLoopRunner agentLoopRunner;
     private final AgentPolicyGate policyGate;
     private final ObjectMapper objectMapper;
@@ -79,6 +83,7 @@ public class AgentRuntime {
             AgentTaskMemoryService taskMemoryService,
             AgentTracePublisher tracePublisher,
             AgentTurnPlanner turnPlanner,
+            AgentMemoryRouter memoryRouter,
             AgentLoopRunner agentLoopRunner,
             AgentPolicyGate policyGate,
             ObjectMapper objectMapper
@@ -92,6 +97,7 @@ public class AgentRuntime {
         this.taskMemoryService = taskMemoryService;
         this.tracePublisher = tracePublisher;
         this.turnPlanner = turnPlanner;
+        this.memoryRouter = memoryRouter;
         this.agentLoopRunner = agentLoopRunner;
         this.policyGate = policyGate;
         this.objectMapper = objectMapper;
@@ -120,6 +126,9 @@ public class AgentRuntime {
             )) {
                 turnPlan = turnPlanner.planTurn(ai, request.message(), history, taskMemory);
             }
+            turnPlan = memoryRouter == null
+                    ? turnPlan
+                    : memoryRouter.repairPlan(request.message(), turnPlan, taskMemory).orElse(turnPlan);
             AgentTaskContext taskContext = turnPlan.toLegacyTaskContext(request.message());
             List<RecommendationSlot> recommendationSlots = AgentGoalNormalizer.recommendationSlots(turnPlan, taskContext, request.message());
             int requestedSongCount = requestedSongCount(request.message(), taskContext, recommendationSlots);
@@ -422,6 +431,7 @@ public class AgentRuntime {
                     evidence.completedTaskType(),
                     evidence.observationSummaries()
             );
+            recordStructuredLoopMemory(userId, goal, evidence);
         }
         taskMemoryService.clearPendingLocalPlaylistAdd(userId);
         List<Song> songs = evidence.songs().isEmpty() ? List.of(pending.song()) : evidence.songs();
@@ -563,6 +573,7 @@ public class AgentRuntime {
                     evidence.completedTaskType(),
                     evidence.observationSummaries()
             );
+            recordStructuredLoopMemory(userId, goal, evidence);
         }
         log.info(
                 "TURN_EXECUTOR stage=agent_loop runId={} userId={} taskType={} outcome={} observationCount={} songCardCount={} songCardTitles={}",
@@ -683,6 +694,96 @@ public class AgentRuntime {
                 已保存待确认收藏目标：%s。
                 最终回答必须明确说明：尚未加入本地 Musio 歌单，可以点击确认按钮或回复“确认收藏”后写入。
                 """.formatted(songTitle(pending.song())).strip();
+    }
+
+    private void recordStructuredLoopMemory(String userId, AgentGoal goal, AgentLoopEvidence evidence) {
+        if (goal == null || evidence == null || !evidence.hasObservations()) {
+            return;
+        }
+        taskMemoryService.recordStructuredEvidence(
+                userId,
+                goal.requiredOutcomes().stream()
+                        .map(Enum::name)
+                        .toList(),
+                recommendationSlotMemories(goal.recommendationSlots(), evidence),
+                successfulToolNames(evidence),
+                goal.localWriteIntent() ? List.of(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST) : List.of()
+        );
+    }
+
+    private List<String> successfulToolNames(AgentLoopEvidence evidence) {
+        if (evidence == null || evidence.observations().isEmpty()) {
+            return List.of();
+        }
+        return evidence.observations().stream()
+                .filter(observation -> observation.status() == AgentObservationStatus.SUCCESS)
+                .map(AgentObservation::toolName)
+                .filter(name -> name != null && !name.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private List<AgentTaskRecommendationSlot> recommendationSlotMemories(List<RecommendationSlot> recommendationSlots, AgentLoopEvidence evidence) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
+        if (slots.isEmpty() || evidence == null || evidence.observations().isEmpty()) {
+            return List.of();
+        }
+        Map<String, SlotSongRefs> refsBySlot = new LinkedHashMap<>();
+        for (RecommendationSlot slot : slots) {
+            refsBySlot.put(slot.slotId(), new SlotSongRefs(new LinkedHashSet<>(), new LinkedHashSet<>()));
+        }
+        String singleSlotId = slots.size() == 1 ? slots.getFirst().slotId() : "";
+        for (AgentObservation observation : evidence.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())
+                    || observation.resultJson().isBlank()) {
+                continue;
+            }
+            try {
+                var root = objectMapper.readTree(observation.resultJson());
+                readRecommendationSlotSongs(root.path("songs"), refsBySlot, singleSlotId);
+                readRecommendationSlotSongs(root.path("recommendations"), refsBySlot, singleSlotId);
+            } catch (Exception ignored) {
+                // Structured memory is an optimization. The observation summary remains the durable evidence.
+            }
+        }
+        List<AgentTaskRecommendationSlot> values = new ArrayList<>();
+        for (RecommendationSlot slot : slots) {
+            SlotSongRefs refs = refsBySlot.getOrDefault(slot.slotId(), new SlotSongRefs(new LinkedHashSet<>(), new LinkedHashSet<>()));
+            values.add(new AgentTaskRecommendationSlot(
+                    slot.slotId(),
+                    slot.targetType(),
+                    slot.target(),
+                    slot.count(),
+                    List.copyOf(refs.songIds()),
+                    List.copyOf(refs.songTitles())
+            ));
+        }
+        return values;
+    }
+
+    private void readRecommendationSlotSongs(com.fasterxml.jackson.databind.JsonNode node, Map<String, SlotSongRefs> refsBySlot, String fallbackSlotId) {
+        if (!node.isArray()) {
+            return;
+        }
+        for (com.fasterxml.jackson.databind.JsonNode item : node) {
+            String slotId = item.path("slotId").asText("");
+            if (slotId.isBlank()) {
+                slotId = fallbackSlotId;
+            }
+            SlotSongRefs refs = refsBySlot.get(slotId);
+            if (refs == null) {
+                continue;
+            }
+            String songId = item.path("id").asText(item.path("songId").asText(""));
+            String title = item.path("title").asText("");
+            if (!songId.isBlank()) {
+                refs.songIds().add(songId.strip());
+            }
+            if (!title.isBlank()) {
+                refs.songTitles().add(title.strip());
+            }
+        }
     }
 
     private int requestedSongCount(String userMessage, AgentTaskContext taskContext, List<RecommendationSlot> recommendationSlots) {
@@ -951,6 +1052,9 @@ public class AgentRuntime {
                 future.cancel(false);
             }
         }
+    }
+
+    private record SlotSongRefs(LinkedHashSet<String> songIds, LinkedHashSet<String> songTitles) {
     }
 
     public AgentEvent describeConfiguration(String runId, ChatRequest request) {

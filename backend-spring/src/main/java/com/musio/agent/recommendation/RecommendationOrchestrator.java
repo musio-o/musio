@@ -4,10 +4,12 @@ import com.musio.agent.AgentRunContext;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.memory.AgentTaskMemoryService;
+import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Song;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.List;
 
 @Component
@@ -42,7 +44,7 @@ public class RecommendationOrchestrator {
         int count = requestedCount(requestedCount);
         AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationRunning);
         return draftGenerator.generate(ai, userRequest, count, avoidSongTitles, taskMemory)
-                .map(draft -> resolve(draft, count))
+                .map(draft -> resolve(draft, count, userRequest))
                 .orElseGet(this::draftFailure);
     }
 
@@ -60,15 +62,15 @@ public class RecommendationOrchestrator {
         int count = requestedCount(RecommendationSlots.totalCount(slots));
         AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationRunning);
         return draftGenerator.generate(ai, userRequest, slots, avoidSongTitles, taskMemory)
-                .map(draft -> resolve(draft, count, slots))
+                .map(draft -> resolve(draft, count, slots, userRequest))
                 .orElseGet(this::draftFailure);
     }
 
-    private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount) {
-        return resolve(draft, requestedCount, List.of());
+    private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount, String userRequest) {
+        return resolve(draft, requestedCount, List.of(), userRequest);
     }
 
-    private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount, List<RecommendationSlot> recommendationSlots) {
+    private RecommendationResponse resolve(RecommendationDraft draft, int requestedCount, List<RecommendationSlot> recommendationSlots, String userRequest) {
         List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
         AgentRunContext.runId().ifPresent(runId -> tracePublisher.publishRecommendationDone(runId, draft.candidates().size()));
         AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationResolveRunning);
@@ -98,8 +100,38 @@ public class RecommendationOrchestrator {
         List<Song> songs = result.resolved().stream()
                 .map(ResolvedRecommendation::song)
                 .toList();
-        AgentRunContext.userId().ifPresent(userId -> taskMemoryService.recordResultSongs(userId, songs));
+        AgentRunContext.userId().ifPresent(userId -> recordRecommendationMemory(userId, userRequest, result, songs));
         return new RecommendationResponse(answerText(result, requestedCount, slots), songs, result, slots);
+    }
+
+    private void recordRecommendationMemory(String userId, String userRequest, RecommendationResult result, List<Song> songs) {
+        if (taskMemoryService == null) {
+            return;
+        }
+        taskMemoryService.recordResultSongs(userId, songs);
+        taskMemoryService.recordRecentRecommendations(userId, recentRecommendations(userRequest, result));
+    }
+
+    private List<AgentRecentRecommendedSong> recentRecommendations(String userRequest, RecommendationResult result) {
+        if (result == null || result.resolved() == null || result.resolved().isEmpty()) {
+            return List.of();
+        }
+        String runId = AgentRunContext.runId().orElse("");
+        Instant now = Instant.now();
+        return result.resolved().stream()
+                .filter(item -> item != null && item.song() != null)
+                .map(item -> new AgentRecentRecommendedSong(
+                        item.song().id(),
+                        item.song().title(),
+                        item.song().artists(),
+                        item.slotId(),
+                        userRequest,
+                        item.reason(),
+                        runId,
+                        "soft_avoid",
+                        now
+                ))
+                .toList();
     }
 
     private RecommendationResponse draftFailure() {
