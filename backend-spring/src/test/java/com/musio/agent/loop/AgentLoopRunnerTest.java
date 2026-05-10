@@ -668,6 +668,56 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void readsLyricsBeforeAcceptingConfirmationRequestForDeferredLocalWrite() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首周杰伦的歌", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_too_early_confirmation")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                1,
+                new AgentGoal(
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LYRICS)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals("tool_completion", outcome.reason());
+        assertEquals(2, outcome.evidence().observations().size());
+        assertEquals("recommend_songs", outcome.evidence().observations().getFirst().toolName());
+        assertEquals("get_lyrics", outcome.evidence().observations().get(1).toolName());
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(1).status());
+        assertTrue(outcome.evidence().observations().get(1).resultJson().contains("从前从前"));
+    }
+
+    @Test
     void allowsRepeatedRecommendationCallWhenSlotCoverageIsIncomplete() {
         AgentCapabilityHandler recommendationHandler = new PartialThenCompleteRecommendationCapabilityHandler();
         AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));

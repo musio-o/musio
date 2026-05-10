@@ -97,9 +97,25 @@ public class AgentLoopRunner {
         for (; step < MAX_STEPS; step++) {
             AgentStepAction action = stepPlanner.nextAction(ai, state);
             if (action.action() == AgentStepActionType.FINAL_ANSWER) {
+                AgentStepAction recoveryAction = recoveryActionForMissingReadOutcome(state);
+                if (recoveryAction != null) {
+                    state = executeToolAction(state, step, recoveryAction, executedCalls);
+                    if (shouldFinishAfterTool(state, recoveryAction)) {
+                        return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
+                    }
+                    continue;
+                }
                 return outcome(AgentLoopOutcomeType.COMPLETED, state, action.reason());
             }
             if (action.action() == AgentStepActionType.REQUEST_CONFIRMATION || action.action() == AgentStepActionType.UNSUPPORTED) {
+                AgentStepAction recoveryAction = recoveryActionForMissingReadOutcome(state);
+                if (recoveryAction != null) {
+                    state = executeToolAction(state, step, recoveryAction, executedCalls);
+                    if (shouldFinishAfterTool(state, recoveryAction)) {
+                        return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
+                    }
+                    continue;
+                }
                 AgentLoopOutcomeType type = action.action() == AgentStepActionType.REQUEST_CONFIRMATION
                         ? AgentLoopOutcomeType.NEEDS_CONFIRMATION
                         : AgentLoopOutcomeType.UNSUPPORTED;
@@ -115,6 +131,124 @@ public class AgentLoopRunner {
             }
         }
         return outcome(AgentLoopOutcomeType.MAX_STEPS, state, "max_steps");
+    }
+
+    private AgentStepAction recoveryActionForMissingReadOutcome(AgentLoopState state) {
+        if (state == null || state.goal() == null || state.goal().requiredOutcomes().isEmpty()) {
+            return null;
+        }
+        AgentCapabilityManifest manifest = manifestFor(state);
+        for (AgentRequiredOutcome outcome : state.goal().requiredOutcomes()) {
+            if (requiredOutcomeSatisfied(state, outcome)) {
+                continue;
+            }
+            AgentStepAction action = recoveryActionForOutcome(state, manifest, outcome);
+            if (action != null) {
+                return action;
+            }
+        }
+        return null;
+    }
+
+    private AgentStepAction recoveryActionForOutcome(AgentLoopState state, AgentCapabilityManifest manifest, AgentRequiredOutcome outcome) {
+        return switch (outcome) {
+            case LYRICS -> readBySongIdsAction(state, manifest, "get_lyrics", "读取歌词", "required_outcome_recovery");
+            case COMMENTS -> readBySongIdsAction(state, manifest, "get_hot_comments", "读取热门评论", "required_outcome_recovery");
+            case DETAIL -> readDetailAction(state, manifest);
+            case RECOMMENDATION -> recommendAction(state, manifest);
+            default -> null;
+        };
+    }
+
+    private AgentStepAction readBySongIdsAction(AgentLoopState state, AgentCapabilityManifest manifest, String toolName, String publicActivity, String reason) {
+        if (manifest == null || !manifest.allows(toolName) || successfulToolObserved(state, toolName)) {
+            return null;
+        }
+        List<String> songIds = observedSongIds(state);
+        if (songIds.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        if ("get_hot_comments".equals(toolName)) {
+            arguments.put("limit", 1);
+        }
+        if (songIds.size() == 1) {
+            arguments.put("songId", songIds.getFirst());
+        } else {
+            arguments.put("songIds", songIds);
+        }
+        return new AgentStepAction(AgentStepActionType.TOOL_CALL, toolName, arguments, publicActivity, 1.0, reason);
+    }
+
+    private AgentStepAction readDetailAction(AgentLoopState state, AgentCapabilityManifest manifest) {
+        if (manifest == null || !manifest.allows("get_song_detail") || successfulToolObserved(state, "get_song_detail")) {
+            return null;
+        }
+        List<String> songIds = observedSongIds(state);
+        if (songIds.isEmpty()) {
+            return null;
+        }
+        return new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "get_song_detail",
+                Map.of("songId", songIds.getFirst()),
+                "读取歌曲详情",
+                1.0,
+                "required_outcome_recovery"
+        );
+    }
+
+    private AgentStepAction recommendAction(AgentLoopState state, AgentCapabilityManifest manifest) {
+        if (manifest == null || !manifest.allows(AgentCapabilityRegistry.RECOMMEND_SONGS)) {
+            return null;
+        }
+        if (recommendationSatisfied(state, new AgentStepAction(AgentStepActionType.TOOL_CALL, AgentCapabilityRegistry.RECOMMEND_SONGS, Map.of(), "", 1.0, ""))) {
+            return null;
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("request", state.goal().effectiveRequest());
+        int count = state.goal().recommendationTotalCount() > 0 ? state.goal().recommendationTotalCount() : Math.max(1, state.requestedSongCount());
+        arguments.put("count", count);
+        List<Map<String, Object>> slots = RecommendationSlots.toArgument(state.goal().recommendationSlots());
+        if (!slots.isEmpty()) {
+            arguments.put("slots", slots);
+        }
+        if (!state.goal().avoidSongTitles().isEmpty()) {
+            arguments.put("excludedTitles", state.goal().avoidSongTitles());
+        }
+        return new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                arguments,
+                "生成推荐",
+                1.0,
+                "required_outcome_recovery"
+        );
+    }
+
+    private List<String> observedSongIds(AgentLoopState state) {
+        if (state == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> songIds = new LinkedHashSet<>();
+        if (state.observations() != null) {
+            state.observations().stream()
+                    .filter(observation -> observation.status() == AgentObservationStatus.SUCCESS)
+                    .flatMap(observation -> observation.songs().stream())
+                    .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                    .map(song -> song.id().strip())
+                    .forEach(songIds::add);
+        }
+        if (state.taskMemory() != null) {
+            if (state.taskMemory().lastTargetSong() != null && state.taskMemory().lastTargetSong().id() != null && !state.taskMemory().lastTargetSong().id().isBlank()) {
+                songIds.add(state.taskMemory().lastTargetSong().id().strip());
+            }
+            state.taskMemory().lastResultSongs().stream()
+                    .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                    .map(song -> song.id().strip())
+                    .forEach(songIds::add);
+        }
+        return List.copyOf(songIds);
     }
 
     private List<AgentStepAction> safeInitialActions(List<AgentStepAction> initialActions) {

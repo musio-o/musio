@@ -106,4 +106,33 @@ class AgentRuntimeTest {
         assertFalse(deferred.localWriteIntent());
         assertEquals(List.of(AgentRequiredOutcome.RECOMMENDATION), deferred.requiredOutcomes());
     }
+
+    @Test
+    void deferringLocalPlaylistWriteKeepsLyricsRequirement() {
+        AgentGoal goal = new AgentGoal(
+                "帮我推荐一首周杰伦的歌，将其加入歌单，最后再给我分享你觉得值得分享的歌词",
+                "帮我推荐一首周杰伦的歌，将其加入歌单，最后再给我分享你觉得值得分享的歌词",
+                "recommend",
+                "new_task",
+                true,
+                true,
+                true,
+                false,
+                1,
+                List.of(),
+                List.of(
+                        AgentRequiredOutcome.RECOMMENDATION,
+                        AgentRequiredOutcome.LYRICS,
+                        AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE
+                )
+        );
+
+        AgentGoal deferred = AgentRuntime.withoutLocalPlaylistWriteRequirement(goal);
+
+        assertFalse(deferred.localWriteIntent());
+        assertEquals(
+                List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LYRICS),
+                deferred.requiredOutcomes()
+        );
+    }
 }

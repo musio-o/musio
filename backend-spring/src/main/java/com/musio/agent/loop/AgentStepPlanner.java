@@ -211,6 +211,7 @@ public class AgentStepPlanner {
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
                 - 如果用户要对多首已推荐/已搜索歌曲读取歌词或热门评论，优先用 get_lyrics.songIds 或 get_hot_comments.songIds 一次传入多个 songId，不要逐首拆成多次工具调用。
                 - 如果同一个 songId 的 get_hot_comments / get_lyrics / get_song_detail 已经成功出现在 observations 中，不要再次调用同一个工具；应继续处理还没完成的目标。
+                - 本地歌单确认只拦截 add_song_to_musio_playlist 这类写入动作；如果 Agent Goal 还要求歌词、评论或详情，应先完成这些只读工具，再 request_confirmation。
                 - search_songs.keyword 只写正向搜索目标，例如歌手、歌曲名或风格；不要把排除、比较或“不是 X 是 Y”这类关系拼进 keyword。
                 - search_songs.limit 必须显式填写；完全没有数量含义时默认 5。
                 - 如果“本轮用户要求的歌曲数量”是明确数字，search_songs.limit 不得超过这个数字；例如用户说“推荐一首”时 limit 必须是 1。

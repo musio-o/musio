@@ -58,13 +58,17 @@ public record AgentGoal(
         String taskType = taskContext == null ? "unknown" : taskContext.taskType();
         String contextMode = taskContext == null ? "new_task" : taskContext.contextMode();
         boolean toolEvidenceExpected = taskContext != null && taskContext.toolEvidenceExpected();
-        List<AgentRequiredOutcome> requiredOutcomes = AgentGoalNormalizer.requiredOutcomes(turnPlan, taskContext);
+        List<AgentRequiredOutcome> requiredOutcomes = AgentGoalNormalizer.requiredOutcomes(turnPlan, taskContext, userMessage);
+        if (requiredOutcomes.contains(AgentRequiredOutcome.RECOMMENDATION)) {
+            taskType = "recommend";
+            contextMode = "new_task";
+        }
         return new AgentGoal(
                 userMessage,
                 effectiveRequest,
                 taskType,
                 contextMode,
-                toolEvidenceExpected || (turnPlan != null && turnPlan.usesTools()),
+                toolEvidenceExpected || (turnPlan != null && turnPlan.usesTools()) || !requiredOutcomes.isEmpty(),
                 toolEvidenceExpected,
                 (turnPlan != null && turnPlan.hasLocalWriteTools()) || requiredOutcomes.contains(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE),
                 (turnPlan != null && turnPlan.hasAccountWriteTools()) || requiredOutcomes.contains(AgentRequiredOutcome.ACCOUNT_WRITE),
