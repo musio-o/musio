@@ -1,6 +1,7 @@
 package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentToolExecutor;
 import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.capability.AgentCapabilityExecutor;
@@ -10,6 +11,7 @@ import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.MusioPlaylistCapabilityExecutor;
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
+import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
@@ -32,6 +34,7 @@ public class AgentLoopRunner {
     private final AgentObservationBuilder observationBuilder;
     private final ObjectMapper objectMapper;
     private final AgentCapabilityRegistry capabilityRegistry;
+    private final AgentTracePublisher tracePublisher;
 
     public AgentLoopRunner(
             AgentStepPlanner stepPlanner,
@@ -39,7 +42,7 @@ public class AgentLoopRunner {
             AgentObservationBuilder observationBuilder,
             ObjectMapper objectMapper
     ) {
-        this(stepPlanner, observationBuilder, objectMapper, new AgentCapabilityRegistry(), new AgentCapabilityExecutor(toolExecutor, null));
+        this(stepPlanner, observationBuilder, objectMapper, new AgentCapabilityRegistry(), new AgentCapabilityExecutor(toolExecutor, null), null);
     }
 
     public AgentLoopRunner(
@@ -50,7 +53,7 @@ public class AgentLoopRunner {
             AgentCapabilityRegistry capabilityRegistry,
             MusioPlaylistCapabilityExecutor musioPlaylistCapabilityExecutor
     ) {
-        this(stepPlanner, observationBuilder, objectMapper, capabilityRegistry, new AgentCapabilityExecutor(toolExecutor, musioPlaylistCapabilityExecutor));
+        this(stepPlanner, observationBuilder, objectMapper, capabilityRegistry, new AgentCapabilityExecutor(toolExecutor, musioPlaylistCapabilityExecutor), null);
     }
 
     @Autowired
@@ -59,13 +62,25 @@ public class AgentLoopRunner {
             AgentObservationBuilder observationBuilder,
             ObjectMapper objectMapper,
             AgentCapabilityRegistry capabilityRegistry,
-            AgentCapabilityExecutor capabilityExecutor
+            AgentCapabilityExecutor capabilityExecutor,
+            AgentTracePublisher tracePublisher
     ) {
         this.stepPlanner = stepPlanner;
         this.capabilityExecutor = capabilityExecutor;
         this.observationBuilder = observationBuilder;
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
         this.capabilityRegistry = capabilityRegistry == null ? new AgentCapabilityRegistry() : capabilityRegistry;
+        this.tracePublisher = tracePublisher;
+    }
+
+    public AgentLoopRunner(
+            AgentStepPlanner stepPlanner,
+            AgentObservationBuilder observationBuilder,
+            ObjectMapper objectMapper,
+            AgentCapabilityRegistry capabilityRegistry,
+            AgentCapabilityExecutor capabilityExecutor
+    ) {
+        this(stepPlanner, observationBuilder, objectMapper, capabilityRegistry, capabilityExecutor, null);
     }
 
     public AgentLoopEvidence run(MusioConfig.Ai ai, AgentLoopState initialState) {
@@ -88,6 +103,7 @@ public class AgentLoopRunner {
             if (step >= MAX_STEPS) {
                 return outcome(AgentLoopOutcomeType.MAX_STEPS, state, "max_steps");
             }
+            publishLoopAction(state, step, action);
             state = executeToolAction(state, step, action, executedCalls);
             if (shouldFinishAfterTool(state, action)) {
                 return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
@@ -95,10 +111,13 @@ public class AgentLoopRunner {
             step++;
         }
         for (; step < MAX_STEPS; step++) {
-            AgentStepAction action = stepPlanner.nextAction(ai, state);
+            publishLoopThinking(state, step);
+            AgentStepAction action = safeAction(stepPlanner.nextAction(ai, state));
+            publishLoopAction(state, step, action);
             if (action.action() == AgentStepActionType.FINAL_ANSWER) {
                 AgentStepAction recoveryAction = recoveryActionForMissingReadOutcome(state);
                 if (recoveryAction != null) {
+                    publishLoopAction(state, step, recoveryAction);
                     state = executeToolAction(state, step, recoveryAction, executedCalls);
                     if (shouldFinishAfterTool(state, recoveryAction)) {
                         return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
@@ -110,6 +129,7 @@ public class AgentLoopRunner {
             if (action.action() == AgentStepActionType.REQUEST_CONFIRMATION || action.action() == AgentStepActionType.UNSUPPORTED) {
                 AgentStepAction recoveryAction = recoveryActionForMissingReadOutcome(state);
                 if (recoveryAction != null) {
+                    publishLoopAction(state, step, recoveryAction);
                     state = executeToolAction(state, step, recoveryAction, executedCalls);
                     if (shouldFinishAfterTool(state, recoveryAction)) {
                         return outcome(AgentLoopOutcomeType.COMPLETED, state, "tool_completion");
@@ -131,6 +151,10 @@ public class AgentLoopRunner {
             }
         }
         return outcome(AgentLoopOutcomeType.MAX_STEPS, state, "max_steps");
+    }
+
+    private AgentStepAction safeAction(AgentStepAction action) {
+        return action == null ? AgentStepAction.finalAnswer("step_planner_returned_null", 0.0) : action;
     }
 
     private AgentStepAction recoveryActionForMissingReadOutcome(AgentLoopState state) {
@@ -269,6 +293,7 @@ public class AgentLoopRunner {
         String resultJson = executeTool(state, action);
         AgentObservation observation = observationBuilder.build(stepId(step), action.toolName(), action.arguments(), resultJson);
         executedCalls.add(callKey(action));
+        publishLoopObservation(state, step, observation);
         return state.withObservation(observation);
     }
 
@@ -552,6 +577,7 @@ public class AgentLoopRunner {
                 action.toolName() + " 被拒绝：" + reason,
                 List.of()
         );
+        publishLoopObservation(state, step, observation);
         return state.withObservation(observation);
     }
 
@@ -560,7 +586,44 @@ public class AgentLoopRunner {
     }
 
     private AgentLoopOutcome outcome(AgentLoopOutcomeType type, AgentLoopState state, String reason) {
+        publishLoopFinished(state, type, reason);
         return new AgentLoopOutcome(type, state, evidence(state), reason);
+    }
+
+    private void publishLoopThinking(AgentLoopState state, int step) {
+        if (!traceEnabled(state)) {
+            return;
+        }
+        tracePublisher.publishLoopThinking(state.runId(), step, state.observations().size());
+    }
+
+    private void publishLoopAction(AgentLoopState state, int step, AgentStepAction action) {
+        if (!traceEnabled(state)) {
+            return;
+        }
+        tracePublisher.publishLoopAction(state.runId(), step, action);
+    }
+
+    private void publishLoopObservation(AgentLoopState state, int step, AgentObservation observation) {
+        if (!traceEnabled(state)) {
+            return;
+        }
+        tracePublisher.publishLoopObservation(state.runId(), step, observation);
+    }
+
+    private void publishLoopFinished(AgentLoopState state, AgentLoopOutcomeType type, String reason) {
+        if (!traceEnabled(state)) {
+            return;
+        }
+        tracePublisher.publishLoopFinished(state.runId(), type, reason, state.observations().size());
+    }
+
+    private boolean traceEnabled(AgentLoopState state) {
+        return tracePublisher != null
+                && AgentRunContext.traceEnabled()
+                && state != null
+                && state.runId() != null
+                && !state.runId().isBlank();
     }
 
     private String completedTaskType(List<AgentObservation> observations) {

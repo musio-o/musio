@@ -2,6 +2,7 @@ package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentGoal;
+import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.AgentToolExecutor;
 import com.musio.agent.capability.AgentCapability;
@@ -17,6 +18,7 @@ import com.musio.agent.capability.MusioPlaylistCapabilityHandler;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.events.AgentEventBus;
+import com.musio.model.AgentEvent;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Comment;
 import com.musio.model.LoginStartResult;
@@ -120,6 +122,50 @@ class AgentLoopRunnerTest {
         assertEquals("search_songs", evidence.observations().getFirst().toolName());
         assertEquals("get_hot_comments", evidence.observations().get(1).toolName());
         assertTrue(evidence.observations().get(1).resultJson().contains("整个故事都在下雨"));
+    }
+
+    @Test
+    void publishesLoopProgressWhenTraceIsEnabled() {
+        AgentEventBus eventBus = new AgentEventBus();
+        AgentTracePublisher tracePublisher = new AgentTracePublisher(eventBus);
+        List<AgentEvent> events = new java.util.ArrayList<>();
+        eventBus.subscribe("run-trace", events::add);
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "search_songs", Map.of("keyword", "周杰伦", "limit", 1), "搜索周杰伦", 0.9, "先找歌"),
+                        AgentStepAction.finalAnswer("信息足够", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                new AgentCapabilityRegistry(),
+                new AgentCapabilityExecutor(toolExecutor(), null),
+                tracePublisher
+        );
+
+        AgentRunContext.setRunId("run-trace");
+        AgentRunContext.setTraceEnabled(true);
+        try {
+            runner.runOutcome(null, new AgentLoopState(
+                    "run-trace",
+                    "local",
+                    "搜索周杰伦",
+                    List.of(),
+                    AgentTaskMemory.empty("local"),
+                    List.of(),
+                    0
+            ));
+        } finally {
+            AgentRunContext.clear();
+        }
+
+        assertTrue(events.stream().anyMatch(event -> "trace_step".equals(event.type())
+                && "loop.step.1".equals(event.data().get("stepId"))
+                && "running".equals(event.data().get("status"))));
+        assertTrue(events.stream().anyMatch(event -> "trace_step".equals(event.type())
+                && "loop.step.1".equals(event.data().get("stepId"))
+                && "done".equals(event.data().get("status"))));
+        assertTrue(events.stream().anyMatch(event -> "trace_step".equals(event.type())
+                && "loop.finish".equals(event.data().get("stepId"))));
     }
 
     @Test

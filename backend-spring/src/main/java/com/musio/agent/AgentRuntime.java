@@ -170,17 +170,21 @@ public class AgentRuntime {
                 );
             }
             PreludeContext preludeContext;
-            try (TraceHeartbeat ignored = progressHeartbeat(
-                    runId,
-                    "tool.execution",
-                    "tool",
-                    "执行音乐能力",
-                    "还在等待音乐能力返回结果。",
-                    "还在根据工具 observation 决定下一步。"
-            )) {
-                preludeContext = shouldRunLoop
-                        ? agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, previousTaskMemory, taskContext, turnPlan, executionCapabilityManifest, requestedSongCount, executionGoal, goal.localWriteIntent())
-                        : PreludeContext.empty();
+            if (shouldRunLoop) {
+                try (TraceHeartbeat ignored = progressHeartbeat(
+                        runId,
+                        "tool.execution",
+                        "tool",
+                        "执行音乐能力",
+                        "正在启动音乐能力 loop。",
+                        "还在等待音乐能力返回结果。",
+                        "还在根据工具结果决定下一步。"
+                )) {
+                    preludeContext = agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, previousTaskMemory, taskContext, turnPlan, executionCapabilityManifest, requestedSongCount, executionGoal, goal.localWriteIntent());
+                }
+                tracePublisher.publishProgressDone(runId, "tool.execution", "tool", "执行音乐能力", "音乐能力阶段完成，准备整理回答。", Map.of());
+            } else {
+                preludeContext = PreludeContext.empty();
             }
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
             Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext);
@@ -1112,13 +1116,16 @@ public class AgentRuntime {
         if (messages == null || messages.length == 0) {
             return TraceHeartbeat.empty();
         }
-        AtomicInteger counter = new AtomicInteger();
+        AtomicInteger counter = new AtomicInteger(1);
+        tracePublisher.publishProgress(runId, stepId, stage, title, messages[0], Map.of(
+                "heartbeat", 0
+        ));
         ScheduledFuture<?> future = progressExecutor.scheduleAtFixedRate(() -> {
             int index = counter.getAndIncrement();
             tracePublisher.publishProgress(runId, stepId, stage, title, messages[index % messages.length], Map.of(
                     "heartbeat", index + 1
             ));
-        }, 1500, 2500, TimeUnit.MILLISECONDS);
+        }, 6000, 6000, TimeUnit.MILLISECONDS);
         return new TraceHeartbeat(future);
     }
 

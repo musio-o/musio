@@ -1,5 +1,10 @@
 package com.musio.agent.trace;
 
+import com.musio.agent.loop.AgentLoopOutcomeType;
+import com.musio.agent.loop.AgentObservation;
+import com.musio.agent.loop.AgentObservationStatus;
+import com.musio.agent.loop.AgentStepAction;
+import com.musio.agent.loop.AgentStepActionType;
 import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
 import org.springframework.stereotype.Component;
@@ -159,6 +164,59 @@ public class AgentTracePublisher {
         publish(runId, stepId, stage, "running", title, summary, safeData == null ? Map.of() : safeData);
     }
 
+    public void publishProgressDone(String runId, String stepId, String stage, String title, String summary, Map<String, Object> safeData) {
+        publish(runId, stepId, stage, "done", title, summary, safeData == null ? Map.of() : safeData);
+    }
+
+    public void publishLoopThinking(String runId, int step, int observationCount) {
+        publish(runId, loopStepId(step), "context", "running", "判断下一步", "正在根据当前请求和已拿到的结果决定下一步动作。", Map.of(
+                "loopStep", step + 1,
+                "observationCount", Math.max(0, observationCount)
+        ));
+    }
+
+    public void publishLoopAction(String runId, int step, AgentStepAction action) {
+        if (action == null) {
+            publish(runId, loopStepId(step), "context", "running", "判断下一步", "还在选择合适的下一步动作。", Map.of(
+                    "loopStep", step + 1
+            ));
+            return;
+        }
+        publish(runId, loopStepId(step), loopStage(action), "running", loopActionTitle(action), loopActionSummary(action), loopActionData(step, action));
+    }
+
+    public void publishLoopObservation(String runId, int step, AgentObservation observation) {
+        String status = observation == null || observation.status() == AgentObservationStatus.FAILURE ? "error"
+                : observation.status() == AgentObservationStatus.SKIPPED ? "skipped"
+                : "done";
+        String toolName = observation == null ? "" : observation.toolName();
+        String title = status.equals("skipped") ? "跳过音乐能力" : status.equals("error") ? "音乐能力遇到问题" : "观察工具结果";
+        String summary = observation == null || observation.plannerSummary().isBlank()
+                ? "已拿到这一轮结果，继续判断是否需要下一步。"
+                : observation.plannerSummary();
+        publish(runId, loopStepId(step), "context", status, title, summary, Map.of(
+                "loopStep", step + 1,
+                "tool", toolName,
+                "songCount", observation == null ? 0 : observation.songs().size()
+        ));
+    }
+
+    public void publishLoopFinished(String runId, AgentLoopOutcomeType outcomeType, String reason, int observationCount) {
+        String summary = switch (outcomeType == null ? AgentLoopOutcomeType.COMPLETED : outcomeType) {
+            case NEEDS_CONFIRMATION -> "需要用户确认后才能继续执行。";
+            case UNSUPPORTED -> "当前能力不足，准备说明限制。";
+            case MAX_STEPS -> "已达到本轮最大步骤数，开始整理已有结果。";
+            default -> "音乐能力阶段完成，开始整理正文。";
+        };
+        if (reason != null && !reason.isBlank()) {
+            summary = summary + " 原因：" + reason + "。";
+        }
+        publish(runId, "loop.finish", "compose", "done", "准备输出正文", summary, Map.of(
+                "outcome", outcomeType == null ? "" : outcomeType.name(),
+                "observationCount", Math.max(0, observationCount)
+        ));
+    }
+
     public boolean shouldTraceUserMessage(String message) {
         if (message == null) {
             return false;
@@ -236,6 +294,57 @@ public class AgentTracePublisher {
             preview.put("success", success);
         }
         return preview;
+    }
+
+    private String loopStepId(int step) {
+        return "loop.step." + (step + 1);
+    }
+
+    private String loopStage(AgentStepAction action) {
+        if (action.action() == AgentStepActionType.TOOL_CALL) {
+            return "tool";
+        }
+        if (action.action() == AgentStepActionType.FINAL_ANSWER) {
+            return "compose";
+        }
+        return "context";
+    }
+
+    private String loopActionTitle(AgentStepAction action) {
+        if (action.action() == AgentStepActionType.TOOL_CALL) {
+            return action.publicActivity().isBlank() ? toolTitle(action.toolName()) : action.publicActivity();
+        }
+        if (action.action() == AgentStepActionType.FINAL_ANSWER) {
+            return "准备输出正文";
+        }
+        if (action.action() == AgentStepActionType.REQUEST_CONFIRMATION) {
+            return "准备请求确认";
+        }
+        return "处理能力边界";
+    }
+
+    private String loopActionSummary(AgentStepAction action) {
+        if (action.action() == AgentStepActionType.TOOL_CALL) {
+            String activity = action.publicActivity().isBlank() ? toolTitle(action.toolName()) : action.publicActivity();
+            return "已决定下一步：" + activity + "。";
+        }
+        if (action.action() == AgentStepActionType.FINAL_ANSWER) {
+            return "已有信息足够回答，开始组织正文。";
+        }
+        if (action.action() == AgentStepActionType.REQUEST_CONFIRMATION) {
+            return "这一步需要用户确认后才能继续。";
+        }
+        return action.reason().isBlank() ? "当前请求超出可执行能力范围。" : action.reason();
+    }
+
+    private Map<String, Object> loopActionData(int step, AgentStepAction action) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("loopStep", step + 1);
+        data.put("action", action.action().name());
+        if (!action.toolName().isBlank()) {
+            data.putAll(toolInputPreview(action.toolName(), action.arguments()));
+        }
+        return data;
     }
 
     private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {

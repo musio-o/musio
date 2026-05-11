@@ -44,7 +44,7 @@ function eventNameLabel(name: string) {
     case "favorite":
       return "收藏";
     case "trace_step":
-      return "执行链";
+      return "进展";
     case "agent_error":
     case "error":
       return "错误";

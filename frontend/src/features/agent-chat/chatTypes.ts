@@ -19,6 +19,7 @@ export type TraceStep = {
   title: string;
   summary?: string;
   safeData?: Record<string, unknown>;
+  updatedAt?: number;
 };
 
 export type ChatConfirmationState = ChatConfirmation & {
@@ -39,12 +40,13 @@ export type ChatMessage = {
 
 export function mergeTraceStep(current: TraceStep[] | undefined, next: TraceStep): TraceStep[] {
   const steps = current ?? [];
+  const stampedNext = { ...next, updatedAt: Date.now() };
   const index = steps.findIndex((step) => step.stepId === next.stepId);
   if (index === -1) {
-    return [...steps, next];
+    return [...steps, stampedNext];
   }
 
-  return steps.map((step, stepIndex) => (stepIndex === index ? { ...step, ...next } : step));
+  return steps.map((step, stepIndex) => (stepIndex === index ? { ...step, ...stampedNext } : step));
 }
 
 export function mergeMessageSongs(current: Song[] | undefined, next: Song[]): Song[] {
