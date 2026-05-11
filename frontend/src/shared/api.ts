@@ -67,6 +67,18 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ userId: "local", message, displayMessage })
     }),
+  confirmChatRun: (runId: string, actionId: string, approved: boolean, selectedSongIds: string[] = []) =>
+    request<ChatRunResponse>(`/api/chat/runs/${encodeURIComponent(runId)}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({
+        actionId,
+        approved,
+        editedInput: {
+          selectedSongIds,
+          reason: approved ? "approved" : "cancelled"
+        }
+      })
+    }),
   chatHistory: (userId = "local") => request<ChatHistoryMessage[]>(`/api/chat/history/${encodeURIComponent(userId)}`),
   search: (keyword: string, limit = 5) =>
     request<Song[]>(`/api/music/search?keyword=${encodeURIComponent(keyword)}&limit=${limit}`),

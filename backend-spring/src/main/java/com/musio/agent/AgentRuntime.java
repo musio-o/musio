@@ -134,13 +134,9 @@ public class AgentRuntime {
             int requestedSongCount = requestedSongCount(request.message(), taskContext, recommendationSlots);
             AgentGoal goal = AgentGoal.from(request.message(), turnPlan, taskContext, requestedSongCount, recommendationSlots);
             AgentCapabilityManifest capabilityManifest = policyGate.manifestFor(goal, turnPlan);
-            boolean deferLocalPlaylistWrite = goal.localWriteIntent();
-            AgentCapabilityManifest executionCapabilityManifest = deferLocalPlaylistWrite
-                    ? readOnlyManifest(capabilityManifest)
-                    : capabilityManifest;
-            AgentGoal executionGoal = deferLocalPlaylistWrite
-                    ? withoutLocalPlaylistWriteRequirement(goal)
-                    : goal;
+            boolean deferLocalPlaylistWrite = false;
+            AgentCapabilityManifest executionCapabilityManifest = capabilityManifest;
+            AgentGoal executionGoal = goal;
             boolean traceEnabled = true;
             AgentRunContext.setTraceEnabled(traceEnabled);
             logTurnRuntimePlan(runId, ai, turnPlan, traceEnabled);
@@ -951,6 +947,7 @@ public class AgentRuntime {
                 ? "已为你准备 %s 首待加入本地 Musio 默认歌单的歌曲。".formatted(pending.songs().size())
                 : "将《%s》加入本地 Musio 默认歌单。".formatted(songTitle(pending.song()));
         return new ChatConfirmation(
+                "",
                 "local_playlist_add",
                 title,
                 description,

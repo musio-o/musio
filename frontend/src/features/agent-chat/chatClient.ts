@@ -15,6 +15,7 @@ type AgentRunHandlers = {
 
 export const chatClient = {
   startChat: api.startChat,
+  confirmRun: api.confirmChatRun,
   openRunEvents
 };
 
@@ -77,6 +78,7 @@ function parseConfirmation(event: AgentEvent | null): ChatConfirmation | null {
   if (!isRecord(confirmation)) {
     return null;
   }
+  const actionId = typeof confirmation.actionId === "string" ? confirmation.actionId : "";
   const type = typeof confirmation.type === "string" ? confirmation.type : "local_playlist_add";
   const title = typeof confirmation.title === "string" ? confirmation.title : "收藏到 Musio 歌单";
   const description = typeof confirmation.description === "string" ? confirmation.description : "";
@@ -90,7 +92,7 @@ function parseConfirmation(event: AgentEvent | null): ChatConfirmation | null {
   const defaultSelectedSongIds = Array.isArray(confirmation.defaultSelectedSongIds)
     ? confirmation.defaultSelectedSongIds.filter((id): id is string => typeof id === "string" && id.trim().length > 0)
     : songs.map((item) => item.id);
-  return { type, title, description, confirmText, cancelText, song: song ?? songs[0] ?? null, songs, selectionMode, defaultSelectedSongIds };
+  return { actionId, type, title, description, confirmText, cancelText, song: song ?? songs[0] ?? null, songs, selectionMode, defaultSelectedSongIds };
 }
 
 function isSong(value: unknown): value is Song {

@@ -1,6 +1,7 @@
 package com.musio.agent.loop;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.ConfirmationService;
 import com.musio.agent.AgentGoal;
 import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentRequiredOutcome;
@@ -21,6 +22,7 @@ import com.musio.events.AgentEventBus;
 import com.musio.model.AgentEvent;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Comment;
+import com.musio.model.PendingConfirmation;
 import com.musio.model.LoginStartResult;
 import com.musio.model.LoginStatus;
 import com.musio.model.Lyrics;
@@ -764,6 +766,345 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void waitsForInlineConfirmationThenContinuesToLyrics() throws Exception {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：安静 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}}
+                """);
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首周杰伦的歌", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "add_song_to_musio_playlist", Map.of("songId", "qqmusic:quiet"), "收藏歌曲", 0.9, "用户要加入歌单"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:quiet"), "读歌词", 0.9, "用户要歌词")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", List.of("qqmusic:quiet"))));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE, AgentRequiredOutcome.LYRICS)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(3, outcome.evidence().observations().size());
+        assertEquals("recommend_songs", outcome.evidence().observations().get(0).toolName());
+        assertEquals("add_song_to_musio_playlist", outcome.evidence().observations().get(1).toolName());
+        assertEquals("get_lyrics", outcome.evidence().observations().get(2).toolName());
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(1).status());
+        assertEquals(AgentObservationStatus.SUCCESS, outcome.evidence().observations().get(2).status());
+    }
+
+    @Test
+    void convertsPlannerConfirmationRequestIntoInlineLocalWriteThenContinues() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：安静 - 周杰伦。","playlistId":"default","song":{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}}
+                """);
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首周杰伦的歌", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_requested_confirmation"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:quiet"), "读歌词", 0.9, "用户要歌词")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", List.of("qqmusic:quiet"))));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE, AgentRequiredOutcome.LYRICS)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(3, outcome.evidence().observations().size());
+        assertEquals("recommend_songs", outcome.evidence().observations().get(0).toolName());
+        assertEquals("add_song_to_musio_playlist", outcome.evidence().observations().get(1).toolName());
+        assertEquals("get_lyrics", outcome.evidence().observations().get(2).toolName());
+    }
+
+    @Test
+    void inlineLocalWriteTargetsOnlyRecommendationSlotBeforeWriteIntent() {
+        AgentCapabilityHandler recommendationHandler = new TwoSlotRecommendationCapabilityHandler();
+        CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单：泡沫 - G.E.M. 邓紫棋。","playlistId":"default","requestedCount":1,"count":1,"songId":"qqmusic:deng","song":{"id":"qqmusic:deng","provider":"QQMUSIC","title":"泡沫","artists":["G.E.M. 邓紫棋"],"album":"Xposed","durationSeconds":258,"artworkUrl":null}}
+                """);
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首邓紫棋，再推荐一首毛不易", "count", 2), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_requested_confirmation"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:deng"), "读歌词", 0.9, "用户要歌词")
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        List<com.musio.model.ChatConfirmation> confirmations = new java.util.ArrayList<>();
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmations.add(confirmation);
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐一首邓紫棋的歌，并将其写入歌单，然后给我分享一句你值得分享的歌词，再给我推荐一首毛不易的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                2,
+                new AgentGoal(
+                        "给我推荐一首邓紫棋的歌，并将其写入歌单，然后给我分享一句你值得分享的歌词，再给我推荐一首毛不易的歌",
+                        "给我推荐一首邓紫棋的歌，并将其写入歌单，然后给我分享一句你值得分享的歌词，再给我推荐一首毛不易的歌",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        2,
+                        List.of(
+                                new com.musio.agent.recommendation.RecommendationSlot("dengzhiqi_song", "artist", "邓紫棋", 1),
+                                new com.musio.agent.recommendation.RecommendationSlot("maobuyi_song", "artist", "毛不易", 1)
+                        ),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE, AgentRequiredOutcome.LYRICS)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(1, confirmations.size());
+        assertEquals(1, confirmations.getFirst().songs().size());
+        assertEquals("qqmusic:deng", confirmations.getFirst().songs().getFirst().id());
+        assertEquals(1, playlistExecutor.calls.size());
+        assertEquals("qqmusic:deng", playlistExecutor.calls.getFirst().get("songId"));
+        assertFalse(playlistExecutor.calls.getFirst().containsKey("songIds"));
+    }
+
+    @Test
+    void inlineLocalWriteKeepsMultipleTargetsWhenEachRecommendationRequestsWrite() {
+        AgentCapabilityHandler recommendationHandler = new TwoSlotRecommendationCapabilityHandler();
+        CapturingPlaylistCapabilityExecutor playlistExecutor = new CapturingPlaylistCapabilityExecutor("""
+                {"success":true,"summary":"已帮你收藏到 Musio 歌单 2 首。","playlistId":"default","requestedCount":2,"count":2,"songs":[{"id":"qqmusic:deng","provider":"QQMUSIC","title":"泡沫","artists":["G.E.M. 邓紫棋"],"album":"Xposed","durationSeconds":258,"artworkUrl":null},{"id":"qqmusic:mao","provider":"QQMUSIC","title":"平凡的一天","artists":["毛不易"],"album":"平凡的一天","durationSeconds":280,"artworkUrl":null}]}
+                """);
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(playlistExecutor);
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首邓紫棋并加入歌单，再推荐一首毛不易也加入歌单", "count", 2), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_requested_confirmation"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), true, Map.of("selectedSongIds", confirmation.defaultSelectedSongIds())));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "帮我推荐一首邓紫棋的歌，将其加入歌单，再帮我推荐一首毛不易的歌，也将其加入歌单",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                2,
+                new AgentGoal(
+                        "帮我推荐一首邓紫棋的歌，将其加入歌单，再帮我推荐一首毛不易的歌，也将其加入歌单",
+                        "帮我推荐一首邓紫棋的歌，将其加入歌单，再帮我推荐一首毛不易的歌，也将其加入歌单",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        2,
+                        List.of(
+                                new com.musio.agent.recommendation.RecommendationSlot("dengzhiqi_song", "artist", "邓紫棋", 1),
+                                new com.musio.agent.recommendation.RecommendationSlot("maobuyi_song", "artist", "毛不易", 1)
+                        ),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(1, playlistExecutor.calls.size());
+        assertEquals(List.of("qqmusic:deng", "qqmusic:mao"), playlistExecutor.calls.getFirst().get("songIds"));
+    }
+
+    @Test
+    void cancelledInlineLocalWriteIsNotRequestedRepeatedly() {
+        AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
+        MusicReadCapabilityHandler readHandler = musicReadCapabilityHandler();
+        MusioPlaylistCapabilityHandler playlistHandler = new MusioPlaylistCapabilityHandler(new StubPlaylistCapabilityExecutor("{}"));
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler, readHandler, playlistHandler));
+        AgentEventBus eventBus = new AgentEventBus();
+        ConfirmationService confirmationService = new ConfirmationService();
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "recommend_songs", Map.of("request", "推荐一首周杰伦的歌", "count", 1), "生成推荐", 0.9, "开放推荐"),
+                        new AgentStepAction(AgentStepActionType.REQUEST_CONFIRMATION, "", Map.of(), "请求收藏确认", 0.9, "planner_requested_confirmation"),
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_lyrics", Map.of("songId", "qqmusic:quiet"), "读歌词", 0.9, "用户要歌词"),
+                        AgentStepAction.finalAnswer("用户已取消收藏，歌词已读取", 0.9)
+                )),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler, readHandler, playlistHandler)),
+                null,
+                eventBus,
+                confirmationService
+        );
+        eventBus.subscribe("run-1", event -> {
+            if ("confirmation_request".equals(event.type())) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> data = (Map<String, Object>) event.data();
+                var confirmation = (com.musio.model.ChatConfirmation) data.get("confirmation");
+                confirmationService.confirm("run-1", new PendingConfirmation(confirmation.actionId(), false, Map.of("reason", "cancelled")));
+            }
+        });
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.manifest(true),
+                1,
+                new AgentGoal(
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "推荐一首周杰伦的歌，将其加入歌单，最后分享歌词",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        true,
+                        false,
+                        1,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE, AgentRequiredOutcome.LYRICS)
+                )
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals(3, outcome.evidence().observations().size());
+        assertEquals(AgentObservationStatus.SKIPPED, outcome.evidence().observations().get(1).status());
+        assertEquals("get_lyrics", outcome.evidence().observations().get(2).toolName());
+        assertTrue(outcome.evidence().observations().get(1).resultJson().contains("confirmation_cancelled"));
+    }
+
+    @Test
     void allowsRepeatedRecommendationCallWhenSlotCoverageIsIncomplete() {
         AgentCapabilityHandler recommendationHandler = new PartialThenCompleteRecommendationCapabilityHandler();
         AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
@@ -897,6 +1238,22 @@ class AgentLoopRunnerTest {
         }
     }
 
+    private static class CapturingPlaylistCapabilityExecutor extends MusioPlaylistCapabilityExecutor {
+        private final String resultJson;
+        private final List<Map<String, Object>> calls = new java.util.ArrayList<>();
+
+        private CapturingPlaylistCapabilityExecutor(String resultJson) {
+            super(null, null, null, null, new ObjectMapper());
+            this.resultJson = resultJson;
+        }
+
+        @Override
+        public String executeAddSongToMusioPlaylist(AgentLoopState state, Map<String, Object> arguments) {
+            calls.add(Map.copyOf(arguments));
+            return resultJson;
+        }
+    }
+
     private static class StubRecommendationCapabilityHandler implements AgentCapabilityHandler {
         private static final AgentCapability CAPABILITY = new AgentCapability(
                 "recommend_songs",
@@ -938,6 +1295,51 @@ class AgentLoopRunnerTest {
         public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
             return Optional.of("""
                     {"success":true,"summary":"已生成并匹配 1 首推荐歌曲。","songs":[{"id":"qqmusic:quiet","provider":"QQMUSIC","title":"安静","artists":["周杰伦"],"album":"范特西","durationSeconds":334,"artworkUrl":null}],"recommendations":[{"songId":"qqmusic:quiet","title":"安静","artists":["周杰伦"],"reason":"钢琴和慢速旋律适合深夜专注。","matchedQuery":"安静 周杰伦"}]}
+                    """);
+        }
+    }
+
+    private static class TwoSlotRecommendationCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "recommend_songs",
+                CapabilityEffect.READ,
+                "测试多 slot 推荐能力。",
+                "{\"request\": string, \"count\": number, \"slots\": []}",
+                Set.of("request")
+        );
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public Map<String, Object> normalizeArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return arguments == null ? Map.of() : arguments;
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            return Optional.of("""
+                    {"success":true,"requestedTotal":2,"resolvedTotal":2,"slotResults":[{"slotId":"dengzhiqi_song","requested":1,"resolved":1},{"slotId":"maobuyi_song","requested":1,"resolved":1}],"songs":[{"slotId":"dengzhiqi_song","id":"qqmusic:deng","provider":"QQMUSIC","title":"泡沫","artists":["G.E.M. 邓紫棋"],"album":"Xposed","durationSeconds":258,"artworkUrl":null},{"slotId":"maobuyi_song","id":"qqmusic:mao","provider":"QQMUSIC","title":"平凡的一天","artists":["毛不易"],"album":"平凡的一天","durationSeconds":280,"artworkUrl":null}],"recommendations":[{"slotId":"dengzhiqi_song","songId":"qqmusic:deng","title":"泡沫","artists":["G.E.M. 邓紫棋"],"reason":"经典抒情作品","matchedQuery":"泡沫 邓紫棋"},{"slotId":"maobuyi_song","songId":"qqmusic:mao","title":"平凡的一天","artists":["毛不易"],"reason":"温暖民谣","matchedQuery":"平凡的一天 毛不易"}]}
                     """);
         }
     }

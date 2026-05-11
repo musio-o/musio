@@ -148,7 +148,15 @@ export function AgentChatPanel({
         onDone: () => {
           onMessagesChange((current) =>
             current.map((item) =>
-              item.role === "agent" && item.runId === run.runId ? { ...item, state: "done" } : item
+              item.role === "agent" && item.runId === run.runId
+                ? {
+                  ...item,
+                  state: "done",
+                  confirmation: item.confirmation && (item.confirmation.status ?? "pending") === "pending"
+                    ? { ...item.confirmation, status: "expired" }
+                    : item.confirmation
+                }
+                : item
             )
           );
           onBusyChange(false);
@@ -175,7 +183,28 @@ export function AgentChatPanel({
   }
 
   function handleConfirmationAction(messageId: string, action: "confirm" | "cancel", text: string, selectedSongIds: string[]) {
-    if (busy || !text.trim()) {
+    const targetMessage = messages.find((item) => item.id === messageId);
+    const runId = targetMessage?.runId;
+    const actionId = targetMessage?.confirmation?.actionId;
+    const confirmationStatus = targetMessage?.confirmation?.status ?? "pending";
+    if ((targetMessage?.state === "done" || targetMessage?.state === "error") && confirmationStatus === "pending") {
+      onMessagesChange((current) =>
+        current.map((item) =>
+          item.id === messageId && item.confirmation
+            ? { ...item, confirmation: { ...item.confirmation, status: "expired" } }
+            : item
+        )
+      );
+      return;
+    }
+    if (confirmationStatus === "confirmed" || confirmationStatus === "cancelled" || confirmationStatus === "expired") {
+      return;
+    }
+    if (!runId || !actionId) {
+      if (!busy && text.trim()) {
+        const selectedSuffix = selectedSongIds.length > 0 ? `：${selectedSongIds.join(",")}` : "";
+        void submitText(`${text.trim()}${selectedSuffix}`, text.trim());
+      }
       return;
     }
 
@@ -186,8 +215,21 @@ export function AgentChatPanel({
           : item
       )
     );
-    const selectedSuffix = selectedSongIds.length > 0 ? `：${selectedSongIds.join(",")}` : "";
-    void submitText(`${text.trim()}${selectedSuffix}`, text.trim());
+    chatClient.confirmRun(runId, actionId, action === "confirm", selectedSongIds)
+      .then(() => {
+        onEvent({ id: crypto.randomUUID(), name: "confirmation", detail: text.trim() || (action === "confirm" ? "已确认" : "已取消") });
+      })
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : "确认操作失败";
+        onMessagesChange((current) =>
+          current.map((item) =>
+            item.id === messageId && item.confirmation
+              ? { ...item, confirmation: { ...item.confirmation, status: targetMessage?.state === "streaming" ? "pending" : "expired" } }
+              : item
+          )
+        );
+        onEvent({ id: crypto.randomUUID(), name: "error", detail });
+      });
   }
 
   function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -210,7 +252,6 @@ export function AgentChatPanel({
         onAddToQueue={onAddToQueue}
         onFavoriteSong={onFavoriteSong}
         onConfirmationAction={handleConfirmationAction}
-        confirmationBusy={busy}
       />
       <form onSubmit={startChat} className="prompt-form">
         <textarea

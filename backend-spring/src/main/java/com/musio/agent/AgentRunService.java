@@ -29,6 +29,7 @@ public class AgentRunService {
     private final AgentEventBus eventBus;
     private final ConversationHistoryService conversationHistoryService;
     private final AgentTaskMemoryService taskMemoryService;
+    private final ConfirmationService confirmationService;
     private final ExecutorService executorService = Executors.newCachedThreadPool();
     private final Map<String, ChatRequest> pendingRuns = new ConcurrentHashMap<>();
     private final Map<String, Future<?>> runningRuns = new ConcurrentHashMap<>();
@@ -38,13 +39,15 @@ public class AgentRunService {
             SseEventPublisher eventPublisher,
             AgentEventBus eventBus,
             ConversationHistoryService conversationHistoryService,
-            AgentTaskMemoryService taskMemoryService
+            AgentTaskMemoryService taskMemoryService,
+            ConfirmationService confirmationService
     ) {
         this.agentRuntime = agentRuntime;
         this.eventPublisher = eventPublisher;
         this.eventBus = eventBus;
         this.conversationHistoryService = conversationHistoryService;
         this.taskMemoryService = taskMemoryService;
+        this.confirmationService = confirmationService;
     }
 
     public ChatRunResponse startRun(ChatRequest request) {
@@ -83,7 +86,8 @@ public class AgentRunService {
     }
 
     public ChatRunResponse confirm(String runId, PendingConfirmation confirmation) {
-        return new ChatRunResponse(runId, "confirmed", "Confirmation accepted.");
+        boolean accepted = confirmationService.confirm(runId, confirmation);
+        return new ChatRunResponse(runId, accepted ? "confirmed" : "not_waiting", accepted ? "Confirmation accepted." : "No active confirmation is waiting.");
     }
 
     public ChatRunResponse cancel(String runId) {
@@ -92,6 +96,7 @@ public class AgentRunService {
         if (task != null) {
             task.cancel(true);
         }
+        confirmationService.clear(runId);
         eventBus.publish(runId, AgentEvent.of("done", Map.of("runId", runId, "state", "cancelled")));
         eventBus.unsubscribe(runId);
         return new ChatRunResponse(runId, "cancelled", "Agent run cancelled.");

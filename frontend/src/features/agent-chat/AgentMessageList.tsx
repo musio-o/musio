@@ -13,7 +13,6 @@ type AgentMessageListProps = {
   onAddToQueue: (song: Song) => void;
   onFavoriteSong: (song: Song) => void;
   onConfirmationAction: (messageId: string, action: "confirm" | "cancel", text: string, selectedSongIds: string[]) => void;
-  confirmationBusy: boolean;
 };
 
 export function AgentMessageList({
@@ -21,8 +20,7 @@ export function AgentMessageList({
   onPlaySong,
   onAddToQueue,
   onFavoriteSong,
-  onConfirmationAction,
-  confirmationBusy
+  onConfirmationAction
 }: AgentMessageListProps) {
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -65,7 +63,11 @@ export function AgentMessageList({
               <div className="chat-response-stack">
                 <div className="chat-bubble">
                   <span>MUSIO</span>
-                  <RetainedTraceSteps steps={message.traceSteps} state={message.state} />
+                  <RetainedTraceSteps
+                    steps={message.traceSteps}
+                    state={message.state}
+                    forceExpanded={message.state !== "done" || Boolean(message.confirmation)}
+                  />
                   {message.content.trim() ? <MarkdownContent text={message.content} /> : null}
                   <InlineSongCards
                     songs={message.state === "done" ? message.songs : undefined}
@@ -77,7 +79,7 @@ export function AgentMessageList({
                     <ConfirmationActions
                       messageId={message.id}
                       confirmation={message.confirmation}
-                      busy={confirmationBusy}
+                      messageState={message.state}
                       onAction={onConfirmationAction}
                     />
                   ) : null}
@@ -106,12 +108,12 @@ export function AgentMessageList({
 function ConfirmationActions({
   messageId,
   confirmation,
-  busy,
+  messageState,
   onAction
 }: {
   messageId: string;
   confirmation: ChatConfirmationState;
-  busy: boolean;
+  messageState: ChatMessage["state"];
   onAction: (messageId: string, action: "confirm" | "cancel", text: string, selectedSongIds: string[]) => void;
 }) {
   const confirmationSongs = confirmationSongsForDisplay(confirmation);
@@ -119,13 +121,16 @@ function ConfirmationActions({
     ?? confirmation.defaultSelectedSongIds
     ?? confirmationSongs.map((song) => song.id);
   const [selectedSongIds, setSelectedSongIds] = useState(initialSelectedIds);
-  const resolved = confirmation.status === "confirmed" || confirmation.status === "cancelled";
+  const expired = confirmation.status === "expired" || ((messageState === "done" || messageState === "error") && (confirmation.status ?? "pending") === "pending");
+  const resolved = confirmation.status === "confirmed" || confirmation.status === "cancelled" || expired;
   const multiple = confirmationSongs.length > 1;
   const statusText = confirmation.status === "confirmed"
     ? "已确认"
     : confirmation.status === "cancelled"
       ? "已取消"
-      : "";
+      : expired
+        ? "任务已结束"
+        : "";
 
   return (
     <div className={`chat-confirmation ${resolved ? "resolved" : ""}`} aria-label={confirmation.title || "等待确认"}>
@@ -142,7 +147,7 @@ function ConfirmationActions({
                 <input
                   type={multiple ? "checkbox" : "radio"}
                   checked={checked}
-                  disabled={busy || resolved}
+                  disabled={resolved}
                   onChange={() => {
                     setSelectedSongIds((current) => {
                       if (!multiple) {
@@ -166,7 +171,7 @@ function ConfirmationActions({
         <button
           type="button"
           className="cancel"
-          disabled={busy || resolved}
+          disabled={resolved}
           onClick={() => onAction(messageId, "cancel", confirmation.cancelText || "取消收藏", [])}
         >
           <X size={15} />
@@ -175,7 +180,7 @@ function ConfirmationActions({
         <button
           type="button"
           className="confirm"
-          disabled={busy || resolved || selectedSongIds.length === 0}
+          disabled={resolved || selectedSongIds.length === 0}
           onClick={() => onAction(messageId, "confirm", confirmation.confirmText || "确认收藏", selectedSongIds)}
         >
           <Check size={15} />
@@ -244,9 +249,15 @@ function AgentProgressBubble({ message }: { message: ChatMessage }) {
   );
 }
 
-function RetainedTraceSteps({ steps, state }: { steps?: TraceStep[]; state: ChatMessage["state"] }) {
-  const [expanded, setExpanded] = useState(false);
+function RetainedTraceSteps({ steps, state, forceExpanded = false }: { steps?: TraceStep[]; state: ChatMessage["state"]; forceExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(forceExpanded);
   const visibleSteps = visibleTraceSteps(steps);
+  useEffect(() => {
+    if (forceExpanded) {
+      setExpanded(true);
+    }
+  }, [forceExpanded]);
+
   if (visibleSteps.length === 0) {
     return null;
   }

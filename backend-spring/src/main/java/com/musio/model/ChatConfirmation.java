@@ -3,6 +3,7 @@ package com.musio.model;
 import java.util.List;
 
 public record ChatConfirmation(
+        String actionId,
         String type,
         String title,
         String description,
@@ -14,11 +15,12 @@ public record ChatConfirmation(
         List<String> defaultSelectedSongIds
 ) {
     public ChatConfirmation(String type, String title, String description, String confirmText, String cancelText, Song song) {
-        this(type, title, description, confirmText, cancelText, song, song == null ? List.of() : List.of(song), "single",
+        this("", type, title, description, confirmText, cancelText, song, song == null ? List.of() : List.of(song), "single",
                 song == null || song.id() == null || song.id().isBlank() ? List.of() : List.of(song.id()));
     }
 
     public ChatConfirmation {
+        actionId = actionId == null ? "" : actionId.strip();
         type = type == null || type.isBlank() ? "local_playlist_add" : type.strip();
         title = title == null ? "" : title.strip();
         description = description == null ? "" : description.strip();

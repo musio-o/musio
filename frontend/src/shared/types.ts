@@ -49,6 +49,7 @@ export type Song = {
 };
 
 export type ChatConfirmation = {
+  actionId?: string;
   type: "local_playlist_add" | string;
   title: string;
   description: string;
