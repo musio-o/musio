@@ -79,5 +79,9 @@ export const api = {
     request<MusioPlaylist>(`/api/musio/playlists/${encodeURIComponent(playlistId)}/items`, {
       method: "POST",
       body: JSON.stringify(song)
+    }),
+  removeMusioPlaylistItem: (playlistId: string, itemId: string) =>
+    request<MusioPlaylist>(`/api/musio/playlists/${encodeURIComponent(playlistId)}/items/${encodeURIComponent(itemId)}`, {
+      method: "DELETE"
     })
 };

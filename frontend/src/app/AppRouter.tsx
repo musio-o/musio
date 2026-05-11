@@ -110,9 +110,34 @@ export function AppRouter() {
       });
   }
 
+  function playPlaylistSongs(songs: Song[], startIndex: number, playlistName: string) {
+    const song = songs[startIndex];
+    void player.playSongs(songs, startIndex)
+      .then(() => addEvent({
+        id: crypto.randomUUID(),
+        name: "player",
+        detail: `已将播放队列切换为 ${playlistName}，正在播放：${song?.title || song?.id || "歌曲"}`
+      }))
+      .catch((error) => {
+        const detail = error instanceof Error && error.message ? error.message : "未知错误";
+        addEvent({ id: crypto.randomUUID(), name: "player", detail: `播放失败：${detail}` });
+      });
+  }
+
   function addToQueue(song: Song) {
     player.addToQueue(song);
     addEvent({ id: crypto.randomUUID(), name: "queue", detail: `已加入队列：${song.title || song.id}` });
+  }
+
+  function addSongsToQueue(songs: Song[], sourceLabel: string) {
+    player.addSongsToQueue(songs);
+    addEvent({
+      id: crypto.randomUUID(),
+      name: "queue",
+      detail: songs.length === 1
+        ? `已加入队列：${songs[0].title || songs[0].id}`
+        : `已加入队列：${sourceLabel}（${songs.length} 首）`
+    });
   }
 
   function favoriteSong(song: Song) {
@@ -186,7 +211,13 @@ export function AppRouter() {
             }}
           />
         ) : route === "playlists" ? (
-          <MusioPlaylistsPage />
+          <MusioPlaylistsPage
+            currentSongId={player.state.currentSong?.id ?? null}
+            disabledReason={musicOperationDisabledReason}
+            onPlayPlaylist={playPlaylistSongs}
+            onAddSongsToQueue={addSongsToQueue}
+            onEvent={addEvent}
+          />
         ) : (
           <section className="workbench-stage">
             <MagneticDotField />

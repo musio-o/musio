@@ -535,10 +535,19 @@ export function usePlayerStore() {
   return {
     state,
     playSong: async (song: Song) => {
-      const existingIndex = state.queue.findIndex((item) => item.id === song.id);
-      const nextQueue = existingIndex >= 0 ? state.queue : [...state.queue, song];
+      const current = stateRef.current;
+      const existingIndex = current.queue.findIndex((item) => item.id === song.id);
+      const nextQueue = existingIndex >= 0 ? current.queue : [...current.queue, song];
       const nextIndex = existingIndex >= 0 ? existingIndex : nextQueue.length - 1;
       await startPlayback(song, nextQueue, nextIndex);
+    },
+    playSongs: async (songs: Song[], startIndex: number) => {
+      const queue = uniqueSongs(songs);
+      if (queue.length === 0) {
+        return;
+      }
+      const index = Math.max(0, Math.min(startIndex, queue.length - 1));
+      await startPlayback(queue[index], queue, index);
     },
     playQueueIndex: async (index: number) => {
       const song = state.queue[index];
@@ -553,6 +562,22 @@ export function usePlayerStore() {
           return current;
         }
         return { ...current, queue: [...current.queue, song] };
+      });
+    },
+    addSongsToQueue: (songs: Song[]) => {
+      setState((current) => {
+        const existingIds = new Set(current.queue.map((song) => song.id));
+        const additions = songs.filter((song) => {
+          if (!song.id || existingIds.has(song.id)) {
+            return false;
+          }
+          existingIds.add(song.id);
+          return true;
+        });
+        if (additions.length === 0) {
+          return current;
+        }
+        return { ...current, queue: [...current.queue, ...additions] };
       });
     },
     removeFromQueue: (songId: string) => {
@@ -641,6 +666,17 @@ export function usePlayerStore() {
       });
     }
   };
+}
+
+function uniqueSongs(songs: Song[]) {
+  const seen = new Set<string>();
+  return songs.filter((song) => {
+    if (!song.id || seen.has(song.id)) {
+      return false;
+    }
+    seen.add(song.id);
+    return true;
+  });
 }
 
 function restorePlayerState(): PlayerState {

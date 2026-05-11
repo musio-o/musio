@@ -147,6 +147,31 @@ public class MusioPlaylistService {
         return updated;
     }
 
+    public synchronized MusioPlaylist removeItem(String playlistId, String itemId) {
+        MusioPlaylist playlist = get(playlistId);
+        if (itemId == null || itemId.isBlank()) {
+            throw new IllegalArgumentException("Playlist item id is required.");
+        }
+        List<MusioPlaylistItem> remaining = playlist.items().stream()
+                .filter(item -> !itemId.equals(item.id()))
+                .toList();
+        if (remaining.size() == playlist.items().size()) {
+            return playlist;
+        }
+
+        MusioPlaylist updated = new MusioPlaylist(
+                playlist.id(),
+                playlist.name(),
+                playlist.description(),
+                renumberItems(remaining),
+                playlist.createdAt(),
+                Instant.now()
+        );
+        playlists.put(updated.id(), updated);
+        persist();
+        return updated;
+    }
+
     private void persist() {
         try {
             Files.createDirectories(playlistPath.getParent());
@@ -176,5 +201,27 @@ public class MusioPlaylistService {
         private PlaylistFile(@JsonProperty("playlists") List<MusioPlaylist> playlists) {
             this.playlists = playlists == null ? List.of() : List.copyOf(playlists);
         }
+    }
+
+    private List<MusioPlaylistItem> renumberItems(List<MusioPlaylistItem> items) {
+        List<MusioPlaylistItem> renumbered = new ArrayList<>();
+        for (int index = 0; index < items.size(); index += 1) {
+            MusioPlaylistItem item = items.get(index);
+            renumbered.add(new MusioPlaylistItem(
+                    item.id(),
+                    item.playlistId(),
+                    item.provider(),
+                    item.providerTrackId(),
+                    item.title(),
+                    item.artists(),
+                    item.album(),
+                    item.durationSeconds(),
+                    item.artworkUrl(),
+                    item.sourceUrl(),
+                    index,
+                    item.createdAt()
+            ));
+        }
+        return List.copyOf(renumbered);
     }
 }

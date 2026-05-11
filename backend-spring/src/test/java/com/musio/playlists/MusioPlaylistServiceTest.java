@@ -56,6 +56,24 @@ class MusioPlaylistServiceTest {
         assertEquals(1, restarted.get("default").items().size());
     }
 
+    @Test
+    void removesSongAndCompactsSortOrder() {
+        Path path = playlistPath();
+        MusioPlaylistService service = service(path);
+
+        service.addSong("default", song("qqmusic:1", "不遗憾"));
+        service.addSong("default", song("qqmusic:2", "麻雀"));
+        String firstItemId = service.get("default").items().getFirst().id();
+
+        MusioPlaylist updated = service.removeItem("default", firstItemId);
+        MusioPlaylistService restarted = service(path);
+
+        assertEquals(1, updated.items().size());
+        assertEquals("qqmusic:2", updated.items().getFirst().providerTrackId());
+        assertEquals(0, updated.items().getFirst().sortOrder());
+        assertEquals("qqmusic:2", restarted.get("default").items().getFirst().providerTrackId());
+    }
+
     private MusioPlaylistService service(Path path) {
         return new MusioPlaylistService(path, new ObjectMapper());
     }

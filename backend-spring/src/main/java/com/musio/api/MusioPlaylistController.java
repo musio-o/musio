@@ -3,6 +3,7 @@ package com.musio.api;
 import com.musio.model.Song;
 import com.musio.playlists.MusioPlaylist;
 import com.musio.playlists.MusioPlaylistService;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,5 +35,10 @@ public class MusioPlaylistController {
     @PostMapping("/{playlistId}/items")
     public MusioPlaylist addSong(@PathVariable String playlistId, @RequestBody Song song) {
         return musioPlaylistService.addSong(playlistId, song);
+    }
+
+    @DeleteMapping("/{playlistId}/items/{itemId}")
+    public MusioPlaylist removeItem(@PathVariable String playlistId, @PathVariable String itemId) {
+        return musioPlaylistService.removeItem(playlistId, itemId);
     }
 }
