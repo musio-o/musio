@@ -1185,6 +1185,40 @@ textarea {
   padding-bottom: 10px;
 }
 
+.trace-steps.retained {
+  gap: 0;
+  margin: 12px 0 0;
+  padding: 9px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 0;
+}
+
+.trace-steps.retained .trace-toggle {
+  min-height: 28px;
+  padding: 4px 0;
+}
+
+.trace-steps.retained .trace-history {
+  max-height: 220px;
+  overflow: auto;
+  padding-top: 9px;
+}
+
+.trace-steps.retained .trace-step {
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 9px;
+}
+
+.trace-steps.retained .trace-step strong {
+  color: rgba(238, 238, 238, 0.84);
+  font-size: 12px;
+}
+
+.trace-steps.retained .trace-step p {
+  color: rgba(238, 238, 238, 0.56);
+  font-size: 11px;
+}
+
 .trace-toggle {
   width: 100%;
   min-height: 32px;

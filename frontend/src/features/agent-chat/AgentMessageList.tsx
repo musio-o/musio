@@ -1,10 +1,11 @@
 import { CSSProperties, useEffect, useRef, useState } from "react";
-import { BookmarkPlus, Check, ListPlus, Play, X } from "lucide-react";
+import { BookmarkPlus, Check, ChevronDown, ChevronRight, ListPlus, Play, X } from "lucide-react";
 import { Song } from "../../shared/types";
 import { ChatConfirmationState, ChatMessage, TraceStep } from "./chatTypes";
 import { MarkdownContent } from "./MarkdownContent";
 
-const MIN_VISIBLE_ANSWER_CHARS = 12;
+const MIN_READABLE_ANSWER_CHARS = 32;
+const MIN_SENTENCE_HANDOFF_CHARS = 12;
 
 type AgentMessageListProps = {
   messages: ChatMessage[];
@@ -79,6 +80,7 @@ export function AgentMessageList({
                       onAction={onConfirmationAction}
                     />
                   ) : null}
+                  <RetainedTraceSteps steps={message.traceSteps} state={message.state} />
                 </>
               ) : (
                 <p>{message.content}</p>
@@ -235,6 +237,55 @@ function AgentProgressBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+function RetainedTraceSteps({ steps, state }: { steps?: TraceStep[]; state: ChatMessage["state"] }) {
+  const [expanded, setExpanded] = useState(false);
+  const visibleSteps = visibleTraceSteps(steps);
+  if (visibleSteps.length === 0) {
+    return null;
+  }
+
+  const displaySteps = retainedTraceSteps(visibleSteps);
+  return (
+    <div className={`trace-steps retained ${expanded ? "expanded" : ""}`} aria-label="Musio 本次处理过程">
+      <button
+        type="button"
+        className="trace-toggle"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <span>{expanded ? "收起处理过程" : "查看处理过程"}</span>
+        <small>{retainedTraceMeta(visibleSteps, state)}</small>
+      </button>
+      {expanded ? (
+        <div className="trace-history">
+          {displaySteps.map((step, index) => (
+            <RetainedTraceStepRow key={step.stepId} step={step} index={index} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RetainedTraceStepRow({ step, index }: { step: TraceStep; index: number }) {
+  const narrative = progressNarrativeText(step, step.status === "running" || step.status === "pending");
+  const detail = progressDetailText(step, narrative);
+
+  return (
+    <div
+      className={`trace-step ${step.status}`}
+      style={{ "--trace-index": index } as CSSProperties}
+    >
+      <span className="trace-step-status">{traceStatusLabel(step.status)}</span>
+      <div>
+        <strong>{narrative}</strong>
+        {detail ? <p>{detail}</p> : null}
+      </div>
+    </div>
+  );
+}
+
 function isProgressBubbleVisible(message: ChatMessage) {
   return message.role === "agent"
     && message.state === "streaming"
@@ -249,11 +300,14 @@ function hasAgentResponseBody(message: ChatMessage) {
   return hasRenderableAnswer(message)
     || message.state === "error"
     || Boolean(message.confirmation)
-    || (message.state === "done" && Boolean(message.songs?.length));
+    || (message.state === "done" && Boolean(message.songs?.length))
+    || (message.state === "done" && hasVisibleTraceSteps(message));
 }
 
 function hasVisibleAnswerStarted(message: ChatMessage) {
-  return message.content.trim().length >= MIN_VISIBLE_ANSWER_CHARS;
+  const text = message.content.trim();
+  return text.length >= MIN_READABLE_ANSWER_CHARS
+    || (text.length >= MIN_SENTENCE_HANDOFF_CHARS && /[。！？.!?\n]/u.test(text));
 }
 
 function hasRenderableAnswer(message: ChatMessage) {
@@ -261,7 +315,11 @@ function hasRenderableAnswer(message: ChatMessage) {
   if (length <= 0) {
     return false;
   }
-  return message.state !== "streaming" || length >= MIN_VISIBLE_ANSWER_CHARS;
+  return message.state !== "streaming" || hasVisibleAnswerStarted(message);
+}
+
+function hasVisibleTraceSteps(message: ChatMessage) {
+  return visibleTraceSteps(message.traceSteps).length > 0;
 }
 
 function InlineSongCards({
@@ -390,6 +448,32 @@ function progressNarrativeSteps(steps: TraceStep[], currentStep: TraceStep) {
 
 function stepUpdatedAt(step: TraceStep) {
   return step.updatedAt ?? 0;
+}
+
+function retainedTraceSteps(steps: TraceStep[]) {
+  return [...steps].sort((left, right) => stepUpdatedAt(left) - stepUpdatedAt(right));
+}
+
+function retainedTraceMeta(steps: TraceStep[], state: ChatMessage["state"]) {
+  const toolCount = steps.filter((step) => step.stage === "tool").length;
+  const running = state === "streaming" || steps.some((step) => step.status === "running" || step.status === "pending");
+  const base = `${steps.length} 步${toolCount > 0 ? ` · ${toolCount} 个音乐能力` : ""}`;
+  return running ? `进行中 · ${base}` : base;
+}
+
+function traceStatusLabel(status: TraceStep["status"]) {
+  switch (status) {
+    case "done":
+      return "完成";
+    case "running":
+      return "进行中";
+    case "error":
+      return "失败";
+    case "skipped":
+      return "跳过";
+    default:
+      return "等待";
+  }
 }
 
 function progressSummary(step: TraceStep) {
