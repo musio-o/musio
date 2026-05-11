@@ -23,7 +23,7 @@ export type TraceStep = {
 };
 
 export type ChatConfirmationState = ChatConfirmation & {
-  status?: "pending" | "confirmed" | "cancelled" | "expired";
+  status?: "pending" | "submitting" | "confirmed" | "cancelled" | "expired";
   selectedSongIds?: string[];
 };
 

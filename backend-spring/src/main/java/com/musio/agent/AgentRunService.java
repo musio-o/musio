@@ -11,6 +11,8 @@ import com.musio.model.ChatRunResponse;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.PendingConfirmation;
 import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -24,6 +26,8 @@ import java.util.concurrent.Future;
 
 @Service
 public class AgentRunService {
+    private static final Logger log = LoggerFactory.getLogger(AgentRunService.class);
+
     private final AgentRuntime agentRuntime;
     private final SseEventPublisher eventPublisher;
     private final AgentEventBus eventBus;
@@ -87,7 +91,15 @@ public class AgentRunService {
 
     public ChatRunResponse confirm(String runId, PendingConfirmation confirmation) {
         boolean accepted = confirmationService.confirm(runId, confirmation);
-        return new ChatRunResponse(runId, accepted ? "confirmed" : "not_waiting", accepted ? "Confirmation accepted." : "No active confirmation is waiting.");
+        String state = accepted ? "confirmed" : "not_waiting";
+        log.info(
+                "AGENT_CONFIRMATION_RESPONSE runId={} actionId={} approved={} state={}",
+                runId,
+                confirmation == null ? "" : confirmation.actionId(),
+                confirmation != null && confirmation.approved(),
+                state
+        );
+        return new ChatRunResponse(runId, state, accepted ? "Confirmation accepted." : "No active confirmation is waiting.");
     }
 
     public ChatRunResponse cancel(String runId) {

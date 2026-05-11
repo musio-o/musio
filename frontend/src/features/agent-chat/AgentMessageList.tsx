@@ -1,5 +1,6 @@
 import { CSSProperties, useEffect, useRef, useState } from "react";
-import { BookmarkPlus, Check, ChevronDown, ChevronRight, ListPlus, Play, X } from "lucide-react";
+import type { MouseEvent } from "react";
+import { BookmarkPlus, Check, ChevronDown, ChevronRight, ListPlus, LoaderCircle, Play, X } from "lucide-react";
 import { Song } from "../../shared/types";
 import { ChatConfirmationState, ChatMessage, TraceStep } from "./chatTypes";
 import { MarkdownContent } from "./MarkdownContent";
@@ -121,19 +122,43 @@ function ConfirmationActions({
     ?? confirmation.defaultSelectedSongIds
     ?? confirmationSongs.map((song) => song.id);
   const [selectedSongIds, setSelectedSongIds] = useState(initialSelectedIds);
+
   const expired = confirmation.status === "expired" || ((messageState === "done" || messageState === "error") && (confirmation.status ?? "pending") === "pending");
-  const resolved = confirmation.status === "confirmed" || confirmation.status === "cancelled" || expired;
+  const submitting = confirmation.status === "submitting";
+  const confirmed = confirmation.status === "confirmed";
+  const cancelled = confirmation.status === "cancelled";
+  const resolved = submitting || confirmed || cancelled || expired;
+  const actionable = !resolved;
+  const statusClass = submitting
+    ? "status-submitting"
+    : confirmed
+      ? "status-confirmed"
+      : cancelled
+        ? "status-cancelled"
+        : expired
+          ? "status-expired"
+          : "status-pending";
   const multiple = confirmationSongs.length > 1;
-  const statusText = confirmation.status === "confirmed"
+  const statusText = confirmed
     ? "已确认"
-    : confirmation.status === "cancelled"
+    : cancelled
       ? "已取消"
-      : expired
-        ? "任务已结束"
-        : "";
+      : submitting
+        ? "处理中"
+        : expired
+          ? "任务已结束"
+          : "";
+
+  function lockLocalControls(event: MouseEvent<HTMLButtonElement>) {
+    event.currentTarget.parentElement
+      ?.querySelectorAll("button")
+      .forEach((button) => {
+        button.disabled = true;
+      });
+  }
 
   return (
-    <div className={`chat-confirmation ${resolved ? "resolved" : ""}`} aria-label={confirmation.title || "等待确认"}>
+    <div className={`chat-confirmation ${statusClass} ${resolved ? "resolved" : ""}`} aria-label={confirmation.title || "等待确认"}>
       <div className="chat-confirmation-copy">
         <strong>{confirmation.title || "需要确认"}</strong>
         {confirmation.description ? <span>{confirmation.description}</span> : null}
@@ -166,27 +191,44 @@ function ConfirmationActions({
           })}
         </div>
       ) : null}
-      {statusText ? <span className="chat-confirmation-status">{statusText}</span> : null}
-      <div className="chat-confirmation-actions">
-        <button
-          type="button"
-          className="cancel"
-          disabled={resolved}
-          onClick={() => onAction(messageId, "cancel", confirmation.cancelText || "取消收藏", [])}
-        >
-          <X size={15} />
-          <span>取消</span>
-        </button>
-        <button
-          type="button"
-          className="confirm"
-          disabled={resolved || selectedSongIds.length === 0}
-          onClick={() => onAction(messageId, "confirm", confirmation.confirmText || "确认收藏", selectedSongIds)}
-        >
-          <Check size={15} />
-          <span>确认</span>
-        </button>
-      </div>
+      {actionable ? (
+        <div className="chat-confirmation-actions">
+          <button
+            type="button"
+            className="cancel"
+            onClick={(event) => {
+              if (resolved) {
+                return;
+              }
+              lockLocalControls(event);
+              onAction(messageId, "cancel", confirmation.cancelText || "取消收藏", []);
+            }}
+          >
+            <X size={15} />
+            <span>取消</span>
+          </button>
+          <button
+            type="button"
+            className="confirm"
+            disabled={selectedSongIds.length === 0}
+            onClick={(event) => {
+              if (resolved || selectedSongIds.length === 0) {
+                return;
+              }
+              lockLocalControls(event);
+              onAction(messageId, "confirm", confirmation.confirmText || "确认收藏", selectedSongIds);
+            }}
+          >
+            <Check size={15} />
+            <span>确认</span>
+          </button>
+        </div>
+      ) : (
+        <div className="chat-confirmation-state" aria-live="polite">
+          {submitting ? <LoaderCircle size={15} /> : confirmed ? <Check size={15} /> : <X size={15} />}
+          <span>{statusText}</span>
+        </div>
+      )}
     </div>
   );
 }

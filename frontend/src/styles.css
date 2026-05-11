@@ -6523,7 +6523,24 @@ canvas.magnetic-dot-field::before {
 }
 
 .workspace-workbench .agent-workspace .chat-confirmation.resolved {
-  opacity: 0.72;
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.status-submitting {
+  border-color: rgba(126, 231, 196, 0.24);
+  background: rgba(126, 231, 196, 0.07);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.status-confirmed {
+  border-color: rgba(126, 231, 196, 0.34);
+  background: rgba(126, 231, 196, 0.08);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.status-cancelled,
+.workspace-workbench .agent-workspace .chat-confirmation.status-expired {
+  border-color: rgba(232, 232, 232, 0.12);
+  background: rgba(232, 232, 232, 0.035);
 }
 
 .workspace-workbench .agent-workspace .chat-confirmation-copy {
@@ -6546,6 +6563,40 @@ canvas.magnetic-dot-field::before {
   font-size: 10px;
   line-height: 1.5;
   letter-spacing: 0.04em;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  justify-self: end;
+  min-width: 78px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid rgba(232, 232, 232, 0.14);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(232, 232, 232, 0.62);
+  font-family: var(--font-data);
+  font-size: 11px;
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.status-confirmed .chat-confirmation-state,
+.workspace-workbench .agent-workspace .chat-confirmation.status-submitting .chat-confirmation-state {
+  border-color: rgba(126, 231, 196, 0.3);
+  background: rgba(126, 231, 196, 0.1);
+  color: rgba(208, 255, 238, 0.94);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.status-submitting .chat-confirmation-state svg {
+  animation: musio-confirmation-spin 1s linear infinite;
+}
+
+@keyframes musio-confirmation-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workspace-workbench .agent-workspace .chat-confirmation-actions {
@@ -6576,6 +6627,17 @@ canvas.magnetic-dot-field::before {
 .workspace-workbench .agent-workspace .chat-confirmation-option.selected {
   border-color: rgba(126, 231, 196, 0.3);
   background: rgba(126, 231, 196, 0.08);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.resolved .chat-confirmation-option {
+  border-color: rgba(232, 232, 232, 0.1);
+  background: rgba(0, 0, 0, 0.12);
+  color: rgba(245, 245, 245, 0.54);
+}
+
+.workspace-workbench .agent-workspace .chat-confirmation.resolved .chat-confirmation-option.selected {
+  border-color: rgba(126, 231, 196, 0.2);
+  background: rgba(126, 231, 196, 0.045);
 }
 
 .workspace-workbench .agent-workspace .chat-confirmation-option input {

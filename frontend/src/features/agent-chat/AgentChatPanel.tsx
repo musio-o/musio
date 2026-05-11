@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent } from "react";
+import { FormEvent, KeyboardEvent, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { Code2, Coffee, Leaf, Music2, SendHorizontal, Shuffle } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -42,6 +42,10 @@ export function AgentChatPanel({
   onAddToQueue,
   onFavoriteSong
 }: AgentChatPanelProps) {
+  const confirmationLocksRef = useRef<Set<string>>(new Set());
+  const handledConfirmationsRef = useRef<Set<string>>(new Set());
+  const handledConfirmationSignaturesRef = useRef<Set<string>>(new Set());
+
   async function startChat(event: FormEvent) {
     event.preventDefault();
     await submitCurrentDraft();
@@ -118,17 +122,13 @@ export function AgentChatPanel({
           onEvent({ id: crypto.randomUUID(), name: "song_cards", detail: `收到 ${songs.length} 首歌曲` });
         },
         onConfirmationRequest: (confirmation, eventRunId) => {
+          const confirmationRunId = eventRunId ?? run.runId;
+          const confirmationKey = confirmationActionKey(confirmationRunId, confirmation.actionId);
+          const confirmationSignature = confirmationActionSignature(confirmation);
           onMessagesChange((current) =>
             current.map((item) =>
-              item.role === "agent" && item.runId === (eventRunId ?? run.runId)
-                ? {
-                  ...item,
-                  confirmation: {
-                    ...confirmation,
-                    status: "pending",
-                    selectedSongIds: confirmation.defaultSelectedSongIds ?? confirmation.songs?.map((song) => song.id)
-                  }
-                }
+              item.role === "agent" && item.runId === confirmationRunId
+                ? withIncomingConfirmation(item, confirmation, confirmationKey, confirmationSignature)
                 : item
             )
           );
@@ -138,7 +138,14 @@ export function AgentChatPanel({
           onMessagesChange((current) =>
             current.map((item) =>
               item.role === "agent" && item.runId === run.runId
-                ? { ...item, content: item.content || detail, state: "error" }
+                ? {
+                  ...item,
+                  content: item.content || detail,
+                  state: "error",
+                  confirmation: item.confirmation && isOpenConfirmationStatus(item.confirmation.status ?? "pending")
+                    ? { ...item.confirmation, status: "expired" }
+                    : item.confirmation
+                }
                 : item
             )
           );
@@ -152,7 +159,7 @@ export function AgentChatPanel({
                 ? {
                   ...item,
                   state: "done",
-                  confirmation: item.confirmation && (item.confirmation.status ?? "pending") === "pending"
+                  confirmation: item.confirmation && isOpenConfirmationStatus(item.confirmation.status ?? "pending")
                     ? { ...item.confirmation, status: "expired" }
                     : item.confirmation
                 }
@@ -187,6 +194,10 @@ export function AgentChatPanel({
     const runId = targetMessage?.runId;
     const actionId = targetMessage?.confirmation?.actionId;
     const confirmationStatus = targetMessage?.confirmation?.status ?? "pending";
+    const lockKey = confirmationActionKey(runId ?? "legacy", actionId ?? messageId);
+    if (confirmationLocksRef.current.has(lockKey)) {
+      return;
+    }
     if ((targetMessage?.state === "done" || targetMessage?.state === "error") && confirmationStatus === "pending") {
       onMessagesChange((current) =>
         current.map((item) =>
@@ -197,39 +208,135 @@ export function AgentChatPanel({
       );
       return;
     }
-    if (confirmationStatus === "confirmed" || confirmationStatus === "cancelled" || confirmationStatus === "expired") {
+    if (confirmationStatus !== "pending") {
       return;
     }
+    const confirmationSignature = confirmationActionSignature(targetMessage?.confirmation);
+    confirmationLocksRef.current.add(lockKey);
+    handledConfirmationsRef.current.add(lockKey);
+    if (confirmationSignature) {
+      handledConfirmationSignaturesRef.current.add(confirmationSignature);
+    }
+    onMessagesChange((current) =>
+      current.map((item) =>
+        item.id === messageId && item.confirmation
+          ? { ...item, confirmation: { ...item.confirmation, status: "submitting" } }
+          : item
+      )
+    );
     if (!runId || !actionId) {
       if (!busy && text.trim()) {
         const selectedSuffix = selectedSongIds.length > 0 ? `：${selectedSongIds.join(",")}` : "";
         void submitText(`${text.trim()}${selectedSuffix}`, text.trim());
+      } else {
+        onMessagesChange((current) =>
+          current.map((item) =>
+            item.id === messageId && item.confirmation
+              ? { ...item, confirmation: { ...item.confirmation, status: "expired" } }
+              : item
+          )
+        );
       }
       return;
     }
-
-    onMessagesChange((current) =>
-      current.map((item) =>
-        item.id === messageId && item.confirmation
-          ? { ...item, confirmation: { ...item.confirmation, status: action === "confirm" ? "confirmed" : "cancelled" } }
-          : item
-      )
-    );
     chatClient.confirmRun(runId, actionId, action === "confirm", selectedSongIds)
-      .then(() => {
-        onEvent({ id: crypto.randomUUID(), name: "confirmation", detail: text.trim() || (action === "confirm" ? "已确认" : "已取消") });
+      .then((response) => {
+        const resolvedStatus = response.state === "confirmed"
+          ? action === "confirm" ? "confirmed" : "cancelled"
+          : "expired";
+        onMessagesChange((current) =>
+          current.map((item) =>
+            item.id === messageId && item.confirmation
+              ? { ...item, confirmation: { ...item.confirmation, status: resolvedStatus } }
+              : item
+          )
+        );
+        onEvent({
+          id: crypto.randomUUID(),
+          name: "confirmation",
+          detail: response.state === "confirmed"
+            ? text.trim() || (action === "confirm" ? "已确认" : "已取消")
+            : "确认已结束或已失效"
+        });
       })
       .catch((error) => {
         const detail = error instanceof Error ? error.message : "确认操作失败";
         onMessagesChange((current) =>
           current.map((item) =>
             item.id === messageId && item.confirmation
-              ? { ...item, confirmation: { ...item.confirmation, status: targetMessage?.state === "streaming" ? "pending" : "expired" } }
+              ? { ...item, confirmation: { ...item.confirmation, status: "expired" } }
               : item
           )
         );
         onEvent({ id: crypto.randomUUID(), name: "error", detail });
       });
+  }
+
+  function confirmationActionKey(runId: string | undefined, actionId: string | undefined) {
+    return `${runId ?? "legacy"}:${actionId ?? ""}`;
+  }
+
+  function confirmationActionSignature(confirmation?: ChatMessage["confirmation"] | null) {
+    if (!confirmation) {
+      return "";
+    }
+    const songIds = (confirmation.defaultSelectedSongIds?.length
+      ? confirmation.defaultSelectedSongIds
+      : confirmation.songs?.map((song) => song.id) ?? (confirmation.song?.id ? [confirmation.song.id] : [])
+    )
+      .filter((id) => id && id.trim())
+      .map((id) => id.trim())
+      .sort();
+    if (songIds.length > 0) {
+      return [
+        confirmation.type || "local_playlist_add",
+        songIds.join(",")
+      ].join("|");
+    }
+    return [
+      confirmation.type || "local_playlist_add",
+      confirmation.title || "",
+      confirmation.description || ""
+    ].join("|");
+  }
+
+  function isSettledConfirmationStatus(status: NonNullable<ChatMessage["confirmation"]>["status"]) {
+    return status === "submitting" || status === "confirmed" || status === "cancelled" || status === "expired";
+  }
+
+  function isOpenConfirmationStatus(status: NonNullable<ChatMessage["confirmation"]>["status"]) {
+    return status === "pending" || status === "submitting";
+  }
+
+  function withIncomingConfirmation(
+    message: ChatMessage,
+    confirmation: NonNullable<ChatMessage["confirmation"]>,
+    confirmationKey: string,
+    confirmationSignature: string
+  ): ChatMessage {
+    const existing = message.confirmation;
+    const existingKey = confirmationActionKey(message.runId, existing?.actionId);
+    const existingStatus = existing?.status ?? "pending";
+    const keepExistingStatus = existing
+      && existingKey === confirmationKey
+      && isSettledConfirmationStatus(existingStatus);
+    const handled = handledConfirmationsRef.current.has(confirmationKey)
+      || (Boolean(confirmationSignature) && handledConfirmationSignaturesRef.current.has(confirmationSignature));
+    return {
+      ...message,
+      confirmation: {
+        ...confirmation,
+        status: keepExistingStatus
+          ? existingStatus
+          : handled
+            ? "expired"
+            : "pending",
+        selectedSongIds: existingKey === confirmationKey ? existing?.selectedSongIds
+          ?? confirmation.defaultSelectedSongIds
+          ?? confirmation.songs?.map((song) => song.id)
+          : confirmation.defaultSelectedSongIds ?? confirmation.songs?.map((song) => song.id)
+      }
+    };
   }
 
   function handleTextareaKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {

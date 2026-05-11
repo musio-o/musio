@@ -394,10 +394,19 @@ public class AgentLoopRunner {
         }
         action = targetedLocalPlaylistWriteAction(state, action);
         String actionId = "%s:%s".formatted(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST, stepId(step));
+        ChatConfirmation confirmation = localPlaylistConfirmation(actionId, state, action);
+        log.info(
+                "AGENT_CONFIRMATION_REQUEST runId={} userId={} actionId={} toolName={} songIds={}",
+                state.runId(),
+                state.userId(),
+                actionId,
+                action.toolName(),
+                confirmation.songs().stream().map(Song::id).toList()
+        );
         confirmationService.prepare(state.runId(), actionId);
         eventBus.publish(state.runId(), AgentEvent.of("confirmation_request", Map.of(
                 "runId", state.runId(),
-                "confirmation", localPlaylistConfirmation(actionId, state, action)
+                "confirmation", confirmation
         )));
         PendingConfirmation result = confirmationService.await(state.runId(), actionId, CONFIRMATION_TIMEOUT_SECONDS);
         if (result == null || !result.approved()) {
