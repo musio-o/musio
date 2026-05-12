@@ -60,7 +60,7 @@ public class MusicProviderGateway {
     public Map<String, Object> execute(SourceToolCall call, SourceContext sourceContext) {
         SourceContext context = sourceContext == null ? SourceContext.defaultContext() : sourceContext;
         SourceToolCall routedCall = routeCall(call, context);
-        MusicProvider provider = provider(context);
+        MusicProvider provider = provider(routedCall.sourceId());
         if (provider instanceof MusicSourceProvider sourceProvider) {
             return sourceProvider.execute(routedCall, context);
         }
