@@ -1,7 +1,13 @@
 package com.musio.agent.recommendation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.memory.context.MemoryContextPackage;
+import com.musio.memory.context.MemoryEvidence;
+import com.musio.memory.context.MemoryType;
 import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -67,5 +73,17 @@ class RecommendationDraftGeneratorTest {
 
         assertEquals(2, draft.candidates().size());
         assertEquals("她说", draft.candidates().get(1).title());
+    }
+
+    @Test
+    void exposesAdditionalMemoryContextForPrompt() {
+        MemoryContextPackage memoryContext = new MemoryContextPackage(
+                "[动态记忆上下文]\n[短期任务记忆]\n- 近期已推荐: 安静",
+                List.of(new MemoryEvidence(MemoryType.TASK_MEMORY, "local", "近期已推荐: 安静", 0.9, 0.9, "test", Instant.now())),
+                16
+        );
+
+        assertTrue(generator.memoryContextPreview(memoryContext).contains("近期已推荐"));
+        assertEquals("无", generator.memoryContextPreview(MemoryContextPackage.empty()));
     }
 }

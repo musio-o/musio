@@ -30,6 +30,9 @@ import com.musio.model.Song;
 import com.musio.model.SourceContext;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.memory.MusicProfileService;
+import com.musio.memory.context.MemoryContextPackage;
+import com.musio.memory.context.MemoryContextService;
+import com.musio.memory.context.MemoryRouteRequest;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -65,6 +68,7 @@ public class AgentRuntime {
     private final AgentTracePublisher tracePublisher;
     private final AgentTurnPlanner turnPlanner;
     private final AgentMemoryRouter memoryRouter;
+    private final MemoryContextService memoryContextService;
     private final AgentLoopRunner agentLoopRunner;
     private final AgentPolicyGate policyGate;
     private final ObjectMapper objectMapper;
@@ -85,6 +89,7 @@ public class AgentRuntime {
             AgentTracePublisher tracePublisher,
             AgentTurnPlanner turnPlanner,
             AgentMemoryRouter memoryRouter,
+            MemoryContextService memoryContextService,
             AgentLoopRunner agentLoopRunner,
             AgentPolicyGate policyGate,
             ObjectMapper objectMapper
@@ -99,6 +104,7 @@ public class AgentRuntime {
         this.tracePublisher = tracePublisher;
         this.turnPlanner = turnPlanner;
         this.memoryRouter = memoryRouter;
+        this.memoryContextService = memoryContextService;
         this.agentLoopRunner = agentLoopRunner;
         this.policyGate = policyGate;
         this.objectMapper = objectMapper;
@@ -137,6 +143,28 @@ public class AgentRuntime {
             int requestedSongCount = requestedSongCount(request.message(), taskContext, recommendationSlots);
             AgentGoal goal = AgentGoal.from(request.message(), turnPlan, taskContext, requestedSongCount, recommendationSlots);
             AgentCapabilityManifest capabilityManifest = policyGate.manifestFor(goal, turnPlan);
+            MemoryContextPackage memoryContext;
+            try (TraceHeartbeat ignored = progressHeartbeat(
+                    runId,
+                    "context.memory",
+                    "context",
+                    "整理记忆上下文",
+                    "正在读取和压缩本轮需要的记忆。",
+                    "还在整理上一轮歌曲、排除项和音乐画像。"
+            )) {
+                memoryContext = memoryContextService == null
+                        ? MemoryContextPackage.empty()
+                        : memoryContextService.build(ai, new MemoryRouteRequest(
+                        userId,
+                        request.message(),
+                        turnPlan.taskType(),
+                        turnPlan.contextMode(),
+                        turnPlan.effectiveRequest(),
+                        goal,
+                        taskMemory,
+                        history
+                ));
+            }
             boolean deferLocalPlaylistWrite = false;
             AgentCapabilityManifest executionCapabilityManifest = capabilityManifest;
             AgentGoal executionGoal = goal;
@@ -179,14 +207,14 @@ public class AgentRuntime {
                         "还在等待音乐能力返回结果。",
                         "还在根据工具结果决定下一步。"
                 )) {
-                    preludeContext = agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, previousTaskMemory, taskContext, turnPlan, executionCapabilityManifest, requestedSongCount, executionGoal, goal.localWriteIntent());
+                    preludeContext = agentLoopPreludeContext(ai, runId, userId, request.message(), history, taskMemory, previousTaskMemory, taskContext, turnPlan, executionCapabilityManifest, requestedSongCount, executionGoal, goal.localWriteIntent(), memoryContext);
                 }
                 tracePublisher.publishProgressDone(runId, "tool.execution", "tool", "执行音乐能力", "音乐能力阶段完成，准备整理回答。", Map.of());
             } else {
                 preludeContext = PreludeContext.empty();
             }
             logComposerPolicy(runId, ai, turnPlan, preludeContext);
-            Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext);
+            Prompt prompt = conversationPrompt(history, request.message(), taskContext.promptContext(), preludeContext, memoryContext);
 
             AgentAnswerStreamGuard answerGuard = new AgentAnswerStreamGuard();
             boolean[] composeStarted = {false};
@@ -604,7 +632,8 @@ public class AgentRuntime {
             AgentCapabilityManifest capabilityManifest,
             int requestedSongCount,
             AgentGoal goal,
-            boolean deferLocalPlaylistWrite
+            boolean deferLocalPlaylistWrite,
+            MemoryContextPackage memoryContext
     ) {
         AgentLoopOutcome outcome = agentLoopRunner.runOutcome(ai, new AgentLoopState(
                 runId,
@@ -616,7 +645,8 @@ public class AgentRuntime {
                 0,
                 capabilityManifest,
                 requestedSongCount,
-                goal
+                goal,
+                memoryContext
         ));
         AgentLoopEvidence evidence = outcome.evidence();
         boolean loopHandledLocalPlaylistWrite = loopHandledLocalPlaylistWrite(evidence);
@@ -978,16 +1008,18 @@ public class AgentRuntime {
             List<ConversationHistoryMessage> history,
             String userMessage,
             String taskContext,
-            PreludeContext preludeContext
+            PreludeContext preludeContext,
+            MemoryContextPackage memoryContext
     ) {
         List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(agentSystemPrompt() + taskContext + preludeContext.text()));
+        messages.add(new SystemMessage(agentSystemPrompt() + memoryContextText(memoryContext) + taskContext + preludeContext.text()));
         if (preludeContext.evidenceBound()) {
             messages.add(new UserMessage("""
                     当前用户输入：
                     %s
 
-                    请只根据系统消息中的本轮任务上下文和本轮工具 evidence 回答。
+                    请只根据系统消息中的动态记忆上下文、本轮任务上下文和本轮工具 evidence 回答。
+                    动态记忆上下文只能用于偏好、指代和避免重复；本轮外部事实必须以工具 evidence 为准。
                     最近历史已经只用于 Router/Planner 判断上下文，不得把历史 assistant 文本当成本轮事实来源。
                     如果你在正文中列出歌曲，必须严格使用系统消息里的“本轮歌曲卡片顺序”，不要重排、补歌或改写歌手。
                     """.formatted(userMessage)));
@@ -1002,6 +1034,13 @@ public class AgentRuntime {
             messages.add(new UserMessage(userMessage));
         }
         return new Prompt(messages);
+    }
+
+    private String memoryContextText(MemoryContextPackage memoryContext) {
+        if (memoryContext == null || memoryContext.promptText().isBlank()) {
+            return "";
+        }
+        return "\n\n" + memoryContext.promptText() + "\n";
     }
 
     private String loopExecutionContext(List<AgentObservation> observations) {

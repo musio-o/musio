@@ -14,6 +14,7 @@ import com.musio.agent.recommendation.RecommendationSlotResult;
 import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.config.MusioConfig;
 import com.musio.config.MusioConfigService;
+import com.musio.memory.context.MemoryContextPackage;
 import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.Song;
 import org.springframework.core.annotation.Order;
@@ -125,23 +126,40 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
         List<RecommendationSlot> executionSlots = retry ? expandedRetrySlots(slots) : slots;
         int executionCount = retry && slots.isEmpty() ? expandedRetryCount(count) : count;
         List<String> excludedTitles = excludedTitles(safeArguments, state);
+        MemoryContextPackage memoryContext = state == null ? MemoryContextPackage.empty() : state.memoryContext();
         RecommendationResponse response = executionSlots.isEmpty()
-                ? recommendationOrchestrator.recommend(
-                        ai(),
-                        request,
-                        executionCount,
-                        excludedTitles,
-                        state == null ? null : state.taskMemory()
-                )
-                : recommendationOrchestrator.recommend(
-                        ai(),
-                        request,
-                        executionSlots,
-                        excludedTitles,
-                        state == null ? null : state.taskMemory()
-                );
+                ? recommend(ai(), request, executionCount, excludedTitles, state == null ? null : state.taskMemory(), memoryContext)
+                : recommend(ai(), request, executionSlots, excludedTitles, state == null ? null : state.taskMemory(), memoryContext);
         response = retry ? uniqueIncrementalResponse(response, state, slots, count) : response;
         return Optional.of(writeResult(response, slots, count));
+    }
+
+    private RecommendationResponse recommend(
+            MusioConfig.Ai ai,
+            String request,
+            int count,
+            List<String> excludedTitles,
+            com.musio.model.AgentTaskMemory taskMemory,
+            MemoryContextPackage memoryContext
+    ) {
+        if (memoryContext == null || memoryContext.isEmpty()) {
+            return recommendationOrchestrator.recommend(ai, request, count, excludedTitles, taskMemory);
+        }
+        return recommendationOrchestrator.recommend(ai, request, count, excludedTitles, taskMemory, memoryContext);
+    }
+
+    private RecommendationResponse recommend(
+            MusioConfig.Ai ai,
+            String request,
+            List<RecommendationSlot> slots,
+            List<String> excludedTitles,
+            com.musio.model.AgentTaskMemory taskMemory,
+            MemoryContextPackage memoryContext
+    ) {
+        if (memoryContext == null || memoryContext.isEmpty()) {
+            return recommendationOrchestrator.recommend(ai, request, slots, excludedTitles, taskMemory);
+        }
+        return recommendationOrchestrator.recommend(ai, request, slots, excludedTitles, taskMemory, memoryContext);
     }
 
     private int remainingCount(AgentLoopState state, int requestedCount) {

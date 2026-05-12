@@ -7,6 +7,7 @@ import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
 import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.memory.MusicProfileService;
+import com.musio.memory.context.MemoryContextPackage;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.MusicProfileMemory;
 import org.slf4j.Logger;
@@ -52,6 +53,17 @@ public class RecommendationDraftGenerator {
             List<String> avoidSongTitles,
             AgentTaskMemory taskMemory
     ) {
+        return generate(ai, userRequest, requestedCount, avoidSongTitles, taskMemory, MemoryContextPackage.empty());
+    }
+
+    public Optional<RecommendationDraft> generate(
+            MusioConfig.Ai ai,
+            String userRequest,
+            int requestedCount,
+            List<String> avoidSongTitles,
+            AgentTaskMemory taskMemory,
+            MemoryContextPackage memoryContext
+    ) {
         if (chatModelFactory == null || ai == null) {
             return Optional.empty();
         }
@@ -73,12 +85,16 @@ public class RecommendationDraftGenerator {
 
                             最近任务记忆（只作短期上下文，不是事实来源）：
                             %s
+
+                            动态记忆上下文（只作偏好和上下文参考，不是本轮工具事实）：
+                            %s
                             """.formatted(
                             safe(userRequest),
                             count,
                             musicProfilePreview(),
                             avoidSongTitles == null || avoidSongTitles.isEmpty() ? "无" : String.join("、", avoidSongTitles),
-                            taskMemoryPreview(taskMemory)
+                            taskMemoryPreview(taskMemory),
+                            memoryContextPreview(memoryContext)
                     ))
             ));
             AgentLlmLogger.logRequest("recommendation_draft", ai, prompt);
@@ -101,9 +117,20 @@ public class RecommendationDraftGenerator {
             List<String> avoidSongTitles,
             AgentTaskMemory taskMemory
     ) {
+        return generate(ai, userRequest, recommendationSlots, avoidSongTitles, taskMemory, MemoryContextPackage.empty());
+    }
+
+    public Optional<RecommendationDraft> generate(
+            MusioConfig.Ai ai,
+            String userRequest,
+            List<RecommendationSlot> recommendationSlots,
+            List<String> avoidSongTitles,
+            AgentTaskMemory taskMemory,
+            MemoryContextPackage memoryContext
+    ) {
         List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
         if (slots.isEmpty()) {
-            return generate(ai, userRequest, 0, avoidSongTitles, taskMemory);
+            return generate(ai, userRequest, 0, avoidSongTitles, taskMemory, memoryContext);
         }
         if (chatModelFactory == null || ai == null) {
             return Optional.empty();
@@ -129,13 +156,17 @@ public class RecommendationDraftGenerator {
 
                             最近任务记忆（只作短期上下文，不是事实来源）：
                             %s
+
+                            动态记忆上下文（只作偏好和上下文参考，不是本轮工具事实）：
+                            %s
                             """.formatted(
                             safe(userRequest),
                             slotPreview(slots),
                             count,
                             musicProfilePreview(),
                             avoidSongTitles == null || avoidSongTitles.isEmpty() ? "无" : String.join("、", avoidSongTitles),
-                            taskMemoryPreview(taskMemory)
+                            taskMemoryPreview(taskMemory),
+                            memoryContextPreview(memoryContext)
                     ))
             ));
             AgentLlmLogger.logRequest("recommendation_draft", ai, prompt);
@@ -302,6 +333,13 @@ public class RecommendationDraftGenerator {
                     .toList()));
         }
         return parts.isEmpty() ? "无" : String.join("\n", parts);
+    }
+
+    String memoryContextPreview(MemoryContextPackage memoryContext) {
+        if (memoryContext == null || memoryContext.promptText().isBlank()) {
+            return "无";
+        }
+        return memoryContext.promptText();
     }
 
     private String recentRecommendationSummary(AgentRecentRecommendedSong recommendation) {

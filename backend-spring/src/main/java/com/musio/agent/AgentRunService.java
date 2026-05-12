@@ -75,12 +75,19 @@ public class AgentRunService {
 
         // 订阅本轮 run 的内存事件总线，将 Agent 执行过程中的 token、工具、歌曲卡片等事件转发到 SSE。
         eventBus.subscribe(runId, event -> {
-            eventPublisher.publish(runId, event);
-            if (isTerminal(event)) {
-                // done / agent_error 是终止事件，发送后释放本轮订阅和任务索引，避免内存残留。
-                eventBus.unsubscribe(runId);
-                pendingRuns.remove(runId);
-                runningRuns.remove(runId);
+            try {
+                boolean delivered = eventPublisher.publish(runId, event);
+                if (!delivered) {
+                    cleanupRun(runId);
+                    return;
+                }
+                if (isTerminal(event)) {
+                    // done / agent_error 是终止事件，发送后释放本轮订阅和任务索引，避免内存残留。
+                    cleanupRun(runId);
+                }
+            } catch (Exception e) {
+                log.warn("Agent run event forwarding failed for run {} type {}: {}", runId, event.type(), e.toString());
+                cleanupRun(runId);
             }
         });
 
@@ -141,6 +148,12 @@ public class AgentRunService {
 
     private boolean isTerminal(AgentEvent event) {
         return "done".equals(event.type()) || "agent_error".equals(event.type());
+    }
+
+    private void cleanupRun(String runId) {
+        eventBus.unsubscribe(runId);
+        pendingRuns.remove(runId);
+        runningRuns.remove(runId);
     }
 
     private ChatConfirmation activeConfirmation(ChatConfirmation confirmation, AgentTaskMemory taskMemory) {

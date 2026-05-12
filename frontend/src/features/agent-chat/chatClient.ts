@@ -67,7 +67,7 @@ function openRunEvents(runId: string, handlers: AgentRunHandlers): EventSource {
     source.close();
   });
   source.onerror = () => {
-    handlers.onError("SSE 连接已中断。");
+    handlers.onError("SSE 连接已中断，任务可能仍在后台运行。");
     source.close();
   };
   return source;

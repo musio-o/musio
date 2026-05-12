@@ -4,6 +4,7 @@ import com.musio.agent.AgentRunContext;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.memory.AgentTaskMemoryService;
+import com.musio.memory.context.MemoryContextPackage;
 import com.musio.model.AgentRecentRecommendedSong;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Song;
@@ -51,6 +52,21 @@ public class RecommendationOrchestrator {
     public RecommendationResponse recommend(
             MusioConfig.Ai ai,
             String userRequest,
+            int requestedCount,
+            List<String> avoidSongTitles,
+            AgentTaskMemory taskMemory,
+            MemoryContextPackage memoryContext
+    ) {
+        int count = requestedCount(requestedCount);
+        AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationRunning);
+        return draftGenerator.generate(ai, userRequest, count, avoidSongTitles, taskMemory, memoryContext)
+                .map(draft -> resolve(draft, count, userRequest))
+                .orElseGet(this::draftFailure);
+    }
+
+    public RecommendationResponse recommend(
+            MusioConfig.Ai ai,
+            String userRequest,
             List<RecommendationSlot> recommendationSlots,
             List<String> avoidSongTitles,
             AgentTaskMemory taskMemory
@@ -62,6 +78,25 @@ public class RecommendationOrchestrator {
         int count = requestedCount(RecommendationSlots.totalCount(slots));
         AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationRunning);
         return draftGenerator.generate(ai, userRequest, slots, avoidSongTitles, taskMemory)
+                .map(draft -> resolve(draft, count, slots, userRequest))
+                .orElseGet(this::draftFailure);
+    }
+
+    public RecommendationResponse recommend(
+            MusioConfig.Ai ai,
+            String userRequest,
+            List<RecommendationSlot> recommendationSlots,
+            List<String> avoidSongTitles,
+            AgentTaskMemory taskMemory,
+            MemoryContextPackage memoryContext
+    ) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(recommendationSlots);
+        if (slots.isEmpty()) {
+            return recommend(ai, userRequest, DEFAULT_COUNT, avoidSongTitles, taskMemory, memoryContext);
+        }
+        int count = requestedCount(RecommendationSlots.totalCount(slots));
+        AgentRunContext.runId().ifPresent(tracePublisher::publishRecommendationRunning);
+        return draftGenerator.generate(ai, userRequest, slots, avoidSongTitles, taskMemory, memoryContext)
                 .map(draft -> resolve(draft, count, slots, userRequest))
                 .orElseGet(this::draftFailure);
     }

@@ -29,3 +29,4 @@ providers/qqmusic-python-sidecar/.venv/
 providers/qqmusic-python-sidecar/__pycache__/
 providers/qqmusic-python-sidecar/app/__pycache__/
 /providers/qqmusic-python-sidecar/.venv-win/Lib/*
+/AGENTS.md

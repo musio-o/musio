@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -18,7 +17,7 @@ public class SseEventPublisher {
 
     public SseEmitter create(String runId) {
         // 0L 表示服务端不主动设置超时时间，连接生命周期由终止事件或客户端断开决定。
-        SseEmitter emitter = new SseEmitter(0L);
+        SseEmitter emitter = newEmitter();
         emitters.put(runId, emitter);
         // 无论正常完成、超时还是异常断开，都要移除 emitter，避免后续继续向失效连接写事件。
         emitter.onCompletion(() -> emitters.remove(runId));
@@ -28,10 +27,10 @@ public class SseEventPublisher {
         return emitter;
     }
 
-    public void publish(String runId, AgentEvent event) {
+    public boolean publish(String runId, AgentEvent event) {
         SseEmitter emitter = emitters.get(runId);
         if (emitter == null) {
-            return;
+            return false;
         }
 
         try {
@@ -43,10 +42,33 @@ public class SseEventPublisher {
                 emitter.complete();
                 emitters.remove(runId);
             }
-        } catch (IOException e) {
-            log.warn("Failed to publish SSE event for run {}", runId, e);
-            emitter.completeWithError(e);
+            return true;
+        } catch (Exception e) {
+            log.warn(
+                    "Failed to publish SSE event for run {} type {}: {}",
+                    runId,
+                    event.type(),
+                    e.toString()
+            );
+            completeWithError(emitter, e);
             emitters.remove(runId);
+            return false;
+        }
+    }
+
+    protected SseEmitter newEmitter() {
+        return new SseEmitter(0L);
+    }
+
+    boolean hasEmitter(String runId) {
+        return emitters.containsKey(runId);
+    }
+
+    private void completeWithError(SseEmitter emitter, Exception error) {
+        try {
+            emitter.completeWithError(error);
+        } catch (Exception closeError) {
+            log.debug("Ignoring SSE emitter close failure: {}", closeError.toString());
         }
     }
 }
