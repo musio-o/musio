@@ -27,5 +27,6 @@ musio:
   providers:
     qqmusic:
       sidecar-base-url: "${MUSIO_QQMUSIC_SIDECAR_BASE_URL:http://127.0.0.1:18767}"
+      allow-static-manifest-fallback: "${MUSIO_QQMUSIC_ALLOW_STATIC_MANIFEST_FALLBACK:false}"
   storage:
     home: "${user.home}/.musio"

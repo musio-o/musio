@@ -71,8 +71,11 @@ public class AgentPolicyGate {
         }
         SourceContext context = sourceContext == null ? SourceContext.defaultContext() : sourceContext;
         ProviderStatus status = sourceStatus(context);
+        boolean sourceSearchAvailable = manifest.capabilities().stream()
+                .anyMatch(capability -> "search_songs".equals(capability.name()));
         List<AgentCapability> allowed = manifest.capabilities().stream()
                 .filter(capability -> allowedForSource(capability, context, status))
+                .filter(capability -> allowsSourceDependencies(capability, sourceSearchAvailable))
                 .toList();
         return new AgentCapabilityManifest(allowed);
     }
@@ -94,6 +97,16 @@ public class AgentPolicyGate {
         }
         if (USER_MUSIC_PROFILE_TOOL.equals(capability.name())) {
             return profileReady(status);
+        }
+        return true;
+    }
+
+    private boolean allowsSourceDependencies(AgentCapability capability, boolean sourceSearchAvailable) {
+        if (capability == null) {
+            return false;
+        }
+        if (AgentCapabilityRegistry.RECOMMEND_SONGS.equals(capability.name())) {
+            return sourceSearchAvailable;
         }
         return true;
     }

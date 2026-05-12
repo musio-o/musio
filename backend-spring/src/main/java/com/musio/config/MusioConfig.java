@@ -24,7 +24,7 @@ public record MusioConfig(
     public record Providers(QQMusic qqmusic) {
     }
 
-    public record QQMusic(String sidecarBaseUrl) {
+    public record QQMusic(String sidecarBaseUrl, boolean allowStaticManifestFallback) {
     }
 
     public record Storage(Path home) {

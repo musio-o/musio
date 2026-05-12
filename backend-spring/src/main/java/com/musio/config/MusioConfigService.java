@@ -52,7 +52,12 @@ public class MusioConfigService {
                         environment.getProperty("musio.providers.qqmusic.sidecar-base-url", derivedQQMusicSidecarBaseUrl)
                 );
 
-        MusioConfig.QQMusic qqMusic = new MusioConfig.QQMusic(qqMusicSidecarBaseUrl);
+        boolean allowStaticManifestFallback = booleanValue(value(
+                fileValues,
+                "providers.qqmusic.allow_static_manifest_fallback",
+                environment.getProperty("musio.providers.qqmusic.allow-static-manifest-fallback", "false")
+        ), false);
+        MusioConfig.QQMusic qqMusic = new MusioConfig.QQMusic(qqMusicSidecarBaseUrl, allowStaticManifestFallback);
 
         MusioConfig.Storage storage = new MusioConfig.Storage(
                 expandHome(value(fileValues, "storage.home", storageHome.toString()))
@@ -167,5 +172,16 @@ public class MusioConfigService {
         } catch (NumberFormatException e) {
             return fallback;
         }
+    }
+
+    private static boolean booleanValue(String value, boolean fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return switch (value.strip().toLowerCase(java.util.Locale.ROOT)) {
+            case "true", "1", "yes", "y", "on" -> true;
+            case "false", "0", "no", "n", "off" -> false;
+            default -> fallback;
+        };
     }
 }

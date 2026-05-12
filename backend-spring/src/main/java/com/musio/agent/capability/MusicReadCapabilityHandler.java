@@ -19,6 +19,7 @@ import java.util.function.Predicate;
 @Order(0)
 public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String USER_MUSIC_PROFILE = "get_user_music_profile";
 
     private final MusicReadTools musicReadTools;
     private final Map<String, ReadCapability> capabilities;
@@ -34,14 +35,14 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         for (SourceCapability capability : sourceCapabilities(SourceCapability::enabled)) {
             values.put(capability.name(), capability.toAgentCapability(argumentSpec(capability.inputSchema())));
         }
-        values.put("get_user_music_profile", capabilities.get("get_user_music_profile").spec());
+        values.put(USER_MUSIC_PROFILE, capabilities.get(USER_MUSIC_PROFILE).spec());
         return values.values().stream()
                 .toList();
     }
 
     @Override
     public boolean supports(String capabilityName) {
-        return capabilities.containsKey(capabilityName) || sourceCapability(capabilityName).isPresent();
+        return isLocalCapability(capabilityName) || sourceCapability(capabilityName).isPresent();
     }
 
     @Override
@@ -53,7 +54,7 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         if (!supports(capabilityName)) {
             return arguments == null ? Map.of() : Map.copyOf(arguments);
         }
-        if (capabilities.containsKey(capabilityName)) {
+        if (isLocalCapability(capabilityName) || sourceCapability(capabilityName).isPresent() && capabilities.containsKey(capabilityName)) {
             return AgentCapabilityArgumentRules.normalizeKnownCapability(capabilityName, arguments, context);
         }
         return arguments == null ? Map.of() : Map.copyOf(arguments);
@@ -76,7 +77,10 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
 
     @Override
     public AgentCapabilityValidationResult validate(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
-        if (!capabilities.containsKey(capabilityName) && sourceCapability(capabilityName).isPresent()) {
+        if (!supports(capabilityName)) {
+            return AgentCapabilityValidationResult.rejected("unknown_tool");
+        }
+        if (!capabilities.containsKey(capabilityName)) {
             return validateSourceRequiredArguments(capabilityName, arguments == null ? Map.of() : arguments);
         }
         return MusicReadCapabilityValidator.validate(state, capabilityName, arguments, supports(capabilityName));
@@ -85,17 +89,23 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
     @Override
     public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
         ReadCapability capability = capabilities.get(capabilityName);
-        if (capability == null) {
-            return sourceCapability(capabilityName)
-                    .map(ignored -> musicReadTools.executeSourceTool(capabilityName, arguments == null ? Map.of() : arguments));
+        if (isLocalCapability(capabilityName)) {
+            return Optional.of(capability.executor().execute(state, arguments == null ? Map.of() : arguments));
         }
-        return Optional.of(capability.executor().execute(state, arguments == null ? Map.of() : arguments));
+        Optional<SourceCapability> sourceCapability = sourceCapability(capabilityName);
+        if (sourceCapability.isEmpty()) {
+            return Optional.empty();
+        }
+        if (capability != null) {
+            return Optional.of(capability.executor().execute(state, arguments == null ? Map.of() : arguments));
+        }
+        return Optional.of(musicReadTools.executeSourceTool(capabilityName, arguments == null ? Map.of() : arguments));
     }
 
     private Map<String, ReadCapability> readCapabilities() {
         Map<String, ReadCapability> values = new LinkedHashMap<>();
         register(values, new AgentCapability("search_songs", CapabilityEffect.READ, "搜索歌曲、歌手、专辑或候选音乐；excludedTitles 可选。", "{\"keyword\": string, \"limit\": number, \"excludedTitles\": string[]}", Set.of("keyword", "limit")), (state, arguments) -> searchSongs(arguments));
-        register(values, new AgentCapability("get_user_music_profile", CapabilityEffect.READ, "读取本地音乐画像摘要。", "{}", Set.of()), (state, ignored) -> musicReadTools.getUserMusicProfile());
+        register(values, new AgentCapability(USER_MUSIC_PROFILE, CapabilityEffect.READ, "读取本地音乐画像摘要。", "{}", Set.of()), (state, ignored) -> musicReadTools.getUserMusicProfile());
         register(values, new AgentCapability("get_song_detail", CapabilityEffect.READ, "读取歌曲详情。", "{\"songId\": string}", Set.of("songId")), (state, arguments) -> musicReadTools.getSongDetail(text(arguments, "songId")));
         register(values, new AgentCapability("get_lyrics", CapabilityEffect.READ, "读取一首或多首歌曲的歌词。", "{\"songId\": string, \"songIds\": string[]}", Set.of()), this::getLyrics);
         register(values, new AgentCapability("get_hot_comments", CapabilityEffect.READ, "读取一首或多首歌曲的热门评论。", "{\"songId\": string, \"songIds\": string[], \"limit\": number}", Set.of()), this::getHotComments);
@@ -122,6 +132,10 @@ public class MusicReadCapabilityHandler implements AgentCapabilityHandler {
         return sourceCapabilities(SourceCapability::enabled).stream()
                 .filter(capability -> capabilityName.equals(capability.name()))
                 .findFirst();
+    }
+
+    private boolean isLocalCapability(String capabilityName) {
+        return USER_MUSIC_PROFILE.equals(capabilityName);
     }
 
     private AgentCapabilityValidationResult validateSourceRequiredArguments(String capabilityName, Map<String, Object> arguments) {

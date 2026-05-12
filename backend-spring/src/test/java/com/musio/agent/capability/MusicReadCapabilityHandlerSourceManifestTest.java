@@ -2,6 +2,13 @@ package com.musio.agent.capability;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentRunContext;
+import com.musio.agent.loop.AgentLoopOutcome;
+import com.musio.agent.loop.AgentLoopRunner;
+import com.musio.agent.loop.AgentLoopState;
+import com.musio.agent.loop.AgentObservationBuilder;
+import com.musio.agent.loop.AgentObservationStatus;
+import com.musio.agent.loop.AgentStepAction;
+import com.musio.agent.loop.AgentStepActionType;
 import com.musio.events.AgentEventBus;
 import com.musio.model.Comment;
 import com.musio.model.LoginStartResult;
@@ -56,6 +63,63 @@ class MusicReadCapabilityHandlerSourceManifestTest {
     }
 
     @Test
+    void hidesDisabledExistingSourceCapabilityEverywhere() {
+        MusicReadCapabilityHandler handler = handler(new DisabledExistingToolProvider());
+        AgentRunContext.setSourceContext(new SourceContext(List.of("qqmusic"), "qqmusic", "local"));
+
+        List<String> names = handler.capabilities().stream().map(AgentCapability::name).toList();
+
+        assertTrue(names.contains("search_songs"));
+        assertFalse(names.contains("get_hot_comments"));
+        assertFalse(handler.supports("get_hot_comments"));
+        assertFalse(handler.validateArguments(
+                "get_hot_comments",
+                Map.of("songId", "qqmusic:1", "limit", 1),
+                AgentCapabilityArgumentContext.stepPlanner(1)
+        ).valid());
+        assertTrue(handler.execute(null, "get_hot_comments", Map.of("songId", "qqmusic:1", "limit", 1)).isEmpty());
+    }
+
+    @Test
+    void loopRejectsDisabledExistingSourceCapabilityFromManifest() {
+        DisabledExistingToolProvider provider = new DisabledExistingToolProvider();
+        MusicReadCapabilityHandler handler = handler(provider);
+        AgentRunContext.setSourceContext(new SourceContext(List.of("qqmusic"), "qqmusic", "local"));
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(handler));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new com.musio.agent.loop.AgentStepPlanner(),
+                new AgentObservationBuilder(objectMapper),
+                objectMapper,
+                registry,
+                new AgentCapabilityExecutor(List.of(handler))
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-disabled-existing-tool",
+                "local",
+                "读一下这首歌的热评",
+                List.of(),
+                null,
+                List.of(),
+                0,
+                registry.manifest(false),
+                0,
+                null
+        ), List.of(new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "get_hot_comments",
+                Map.of("songId", "qqmusic:1", "limit", 1),
+                "读热评",
+                1.0,
+                "test_disabled_manifest"
+        )));
+
+        assertEquals(AgentObservationStatus.SKIPPED, outcome.evidence().observations().getFirst().status());
+        assertTrue(outcome.evidence().observations().getFirst().resultJson().contains("unknown_tool"));
+        assertFalse(provider.executed);
+    }
+
+    @Test
     void validatesRequiredArgumentsFromSourceCapability() {
         MusicReadCapabilityHandler handler = handler(new DynamicProvider());
         AgentRunContext.setSourceContext(new SourceContext(List.of("qqmusic"), "qqmusic", "local"));
@@ -93,7 +157,7 @@ class MusicReadCapabilityHandlerSourceManifestTest {
         return new MusicReadCapabilityHandler(tools);
     }
 
-    private static final class DynamicProvider implements MusicProvider, MusicSourceProvider {
+    private static class DynamicProvider implements MusicProvider, MusicSourceProvider {
         private String lastToolName;
 
         @Override
@@ -193,6 +257,42 @@ class MusicReadCapabilityHandlerSourceManifestTest {
         @Override
         public List<Comment> getComments(String songId) {
             throw new UnsupportedOperationException();
+        }
+    }
+
+    private static final class DisabledExistingToolProvider extends DynamicProvider {
+        private boolean executed;
+
+        @Override
+        public List<SourceCapability> capabilities(SourceContext context) {
+            return List.of(
+                    new SourceCapability(
+                            "search_songs",
+                            CapabilityEffect.READ,
+                            "搜索歌曲",
+                            Map.of("keyword", "string", "limit", "number"),
+                            Set.of("keyword", "limit"),
+                            true,
+                            "",
+                            "songs"
+                    ),
+                    new SourceCapability(
+                            "get_hot_comments",
+                            CapabilityEffect.READ,
+                            "读取歌曲热门评论",
+                            Map.of("songId", "string", "limit", "number"),
+                            Set.of("songId"),
+                            false,
+                            "comment api unavailable",
+                            "comments"
+                    )
+            );
+        }
+
+        @Override
+        public Map<String, Object> execute(SourceToolCall call, SourceContext context) {
+            executed = true;
+            return Map.of("success", true);
         }
     }
 }

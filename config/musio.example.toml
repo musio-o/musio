@@ -46,6 +46,9 @@ port = 18766
 sidecar_host = "127.0.0.1"
 sidecar_port = 18767
 sidecar_base_url = "http://127.0.0.1:18767"
+# Development compatibility only. Keep false so Agent tools reflect the live
+# sidecar manifest instead of Java's static fallback list.
+allow_static_manifest_fallback = false
 
 [storage]
 home = "~/.musio"
