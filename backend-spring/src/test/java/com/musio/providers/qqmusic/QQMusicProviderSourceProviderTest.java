@@ -28,8 +28,17 @@ class QQMusicProviderSourceProviderTest {
     }
 
     @Test
-    void fallsBackToDefaultReadCapabilitiesWhenManifestIsUnavailable() {
-        QQMusicProvider provider = new QQMusicProvider(null, new StubSidecarClient(true));
+    void hidesReadCapabilitiesWhenManifestIsUnavailableByDefault() {
+        QQMusicProvider provider = new QQMusicProvider(null, new StubSidecarClient(true, false));
+
+        List<SourceCapability> capabilities = provider.capabilities(SourceContext.defaultContext());
+
+        assertTrue(capabilities.isEmpty());
+    }
+
+    @Test
+    void fallsBackToDefaultReadCapabilitiesWhenCompatibilityFallbackIsEnabled() {
+        QQMusicProvider provider = new QQMusicProvider(null, new StubSidecarClient(true, true));
 
         List<SourceCapability> capabilities = provider.capabilities(SourceContext.defaultContext());
 
@@ -57,11 +66,22 @@ class QQMusicProviderSourceProviderTest {
 
     private static final class StubSidecarClient extends QQMusicSidecarClient {
         private final boolean failManifest;
+        private final boolean allowStaticManifestFallback;
         private String lastToolName;
 
         private StubSidecarClient(boolean failManifest) {
+            this(failManifest, false);
+        }
+
+        private StubSidecarClient(boolean failManifest, boolean allowStaticManifestFallback) {
             super(null);
             this.failManifest = failManifest;
+            this.allowStaticManifestFallback = allowStaticManifestFallback;
+        }
+
+        @Override
+        public boolean allowStaticManifestFallback() {
+            return allowStaticManifestFallback;
         }
 
         @Override

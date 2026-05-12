@@ -16,6 +16,8 @@ import com.musio.providers.MusicSourceDefaults;
 import com.musio.providers.MusicSourceProvider;
 import com.musio.providers.SourceCapability;
 import com.musio.providers.SourceToolCall;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -23,6 +25,8 @@ import java.util.Map;
 
 @Component
 public class QQMusicProvider implements MusicProvider, MusicSourceProvider {
+    private static final Logger log = LoggerFactory.getLogger(QQMusicProvider.class);
+
     private final QQMusicAuthService authService;
     private final QQMusicSidecarClient sidecarClient;
 
@@ -45,8 +49,13 @@ public class QQMusicProvider implements MusicProvider, MusicSourceProvider {
     public List<SourceCapability> capabilities(SourceContext context) {
         try {
             return sidecarClient.manifest().enabledCapabilities();
-        } catch (RuntimeException ignored) {
-            return MusicSourceDefaults.readCapabilities();
+        } catch (RuntimeException error) {
+            if (sidecarClient.allowStaticManifestFallback()) {
+                log.warn("QQ Music sidecar manifest unavailable; using static compatibility capability fallback: {}", errorMessage(error));
+                return MusicSourceDefaults.readCapabilities();
+            }
+            log.warn("QQ Music sidecar manifest unavailable; no source-backed tools will be injected: {}", errorMessage(error));
+            return List.of();
         }
     }
 
@@ -103,5 +112,11 @@ public class QQMusicProvider implements MusicProvider, MusicSourceProvider {
     @Override
     public List<Comment> getComments(String songId) {
         return sidecarClient.comments(songId);
+    }
+
+    private String errorMessage(RuntimeException error) {
+        return error.getMessage() == null || error.getMessage().isBlank()
+                ? error.getClass().getSimpleName()
+                : error.getMessage();
     }
 }

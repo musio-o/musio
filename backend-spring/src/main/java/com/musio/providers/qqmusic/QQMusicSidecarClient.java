@@ -135,6 +135,14 @@ public class QQMusicSidecarClient {
         );
     }
 
+    public boolean allowStaticManifestFallback() {
+        return configService != null
+                && configService.config() != null
+                && configService.config().providers() != null
+                && configService.config().providers().qqmusic() != null
+                && configService.config().providers().qqmusic().allowStaticManifestFallback();
+    }
+
     public Map<String, Object> executeTool(SourceToolCall call) {
         SourceToolCall safeCall = call == null ? new SourceToolCall(ProviderType.QQMUSIC.sourceId(), "", Map.of()) : call;
         HttpUrl url = appendPath("/tools/" + safeCall.toolName());

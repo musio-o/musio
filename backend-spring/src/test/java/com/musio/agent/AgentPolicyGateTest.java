@@ -1,6 +1,8 @@
 package com.musio.agent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.capability.RecommendationCapabilityHandler;
 import com.musio.model.MusicGeneState;
 import com.musio.model.MusicGeneStatus;
 import com.musio.model.ProviderStatus;
@@ -94,6 +96,22 @@ class AgentPolicyGateTest {
 
         assertTrue(manifest.allows("search_songs"));
         assertFalse(manifest.allows("get_user_music_profile"));
+    }
+
+    @Test
+    void hidesRecommendationWhenActiveSourceDoesNotExposeSearchCapability() {
+        AgentPolicyGate gate = new AgentPolicyGate(
+                new AgentCapabilityRegistry(List.of(new RecommendationCapabilityHandler(null, null, new ObjectMapper()))),
+                new StubProviderStatusService(status(true))
+        );
+
+        var manifest = gate.manifestFor(
+                "给我推荐几首歌",
+                null,
+                new SourceContext(List.of("qqmusic"), "qqmusic", "local")
+        );
+
+        assertFalse(manifest.allows(AgentCapabilityRegistry.RECOMMEND_SONGS));
     }
 
     private static ProviderStatus status(boolean authenticated) {
