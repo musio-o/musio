@@ -1,7 +1,12 @@
 package com.musio.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.model.AgentTaskMemory;
+import com.musio.model.MusicGeneStatus;
+import com.musio.model.ProviderStatus;
+import com.musio.model.ProviderType;
+import com.musio.providers.ProviderStatusService;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -274,6 +279,34 @@ class AgentTurnPlannerTest {
     }
 
     @Test
+    void dropsSourceReadHintsWhenPolicyGateHidesSourceTools() {
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry();
+        AgentTurnPlanner gatedPlanner = new AgentTurnPlanner(
+                null,
+                new ObjectMapper(),
+                registry,
+                new AgentPolicyGate(registry, new StubProviderStatusService())
+        );
+
+        AgentTurnPlan plan = gatedPlanner.parsePlan("""
+                {
+                  "disposition": "use_tools",
+                  "taskType": "search",
+                  "contextMode": "new_task",
+                  "effectiveRequest": "搜索周杰伦",
+                  "memoryUse": {"usesTaskMemory": false, "usedFields": [], "reason": "新任务"},
+                  "toolCalls": [
+                    {"toolName": "search_songs", "arguments": {"keyword": "周杰伦", "limit": 1}}
+                  ],
+                  "confidence": 0.91
+                }
+                """, "搜索周杰伦").orElseThrow();
+
+        assertEquals(TurnDisposition.USE_TOOLS, plan.disposition());
+        assertTrue(plan.toolCalls().isEmpty());
+    }
+
+    @Test
     void dropsInvalidSearchHintButKeepsMusicLoopIntent() {
         AgentTurnPlan plan = planner.parsePlan("""
                 {
@@ -338,6 +371,28 @@ class AgentTurnPlannerTest {
         assertEquals(TurnDisposition.RESPOND_ONLY, plan.disposition());
         assertTrue(plan.toolCalls().isEmpty());
         assertEquals("low_confidence", plan.fallbackReason());
+    }
+
+    private static final class StubProviderStatusService extends ProviderStatusService {
+        private StubProviderStatusService() {
+            super(null, null, null, null);
+        }
+
+        @Override
+        public ProviderStatus status(ProviderType provider) {
+            return new ProviderStatus(
+                    ProviderType.QQMUSIC,
+                    "QQ 音乐",
+                    true,
+                    false,
+                    false,
+                    "QR_CODE",
+                    "需要扫码登录 QQ 音乐。",
+                    "NOT_LOGGED_IN",
+                    "UNAVAILABLE",
+                    MusicGeneStatus.unavailable(ProviderType.QQMUSIC, "需要扫码登录 QQ 音乐。")
+            );
+        }
     }
 
 }

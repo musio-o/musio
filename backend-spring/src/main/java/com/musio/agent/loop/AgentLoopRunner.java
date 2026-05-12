@@ -764,7 +764,7 @@ public class AgentLoopRunner {
             return true;
         }
         if (state.requestedSongCount() == 1
-                && state.capabilityManifest().allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
+                && manifestFor(state).allows(AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST)
                 && successfulToolObserved(state, "get_hot_comments")
                 && successfulLocalPlaylistWriteObserved(state)) {
             return true;
@@ -1013,7 +1013,7 @@ public class AgentLoopRunner {
 
     private AgentCapabilityManifest manifestFor(AgentLoopState state) {
         AgentCapabilityManifest manifest = state == null ? null : state.capabilityManifest();
-        return manifest == null || manifest.isEmpty() ? capabilityRegistry.readManifest() : manifest;
+        return manifest == null ? capabilityRegistry.readManifest() : manifest;
     }
 
     private AgentLoopState appendSkipped(AgentLoopState state, int step, AgentStepAction action, String reason) {

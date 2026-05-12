@@ -8,6 +8,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.capability.CapabilityEffect;
 import com.musio.config.MusioConfigService;
 import com.musio.model.Comment;
+import com.musio.model.LoginStartResult;
+import com.musio.model.LoginState;
+import com.musio.model.LoginStatus;
 import com.musio.model.Lyrics;
 import com.musio.model.MusicAccountRef;
 import com.musio.model.MusicGeneSnapshot;
@@ -73,6 +76,39 @@ public class QQMusicSidecarClient {
                 status.displayName(),
                 status.message(),
                 parseInstant(status.checkedAt())
+        );
+    }
+
+    public LoginStartResult startLogin() {
+        SidecarLoginStart start = post(appendPath("/auth/start"), Map.of(), SidecarLoginStart.class);
+        return new LoginStartResult(
+                start.sessionId(),
+                ProviderType.QQMUSIC,
+                loginState(start.state()),
+                start.qrCodeDataUrl(),
+                start.message()
+        );
+    }
+
+    public LoginStatus checkLogin(String sessionId) {
+        SidecarLoginStatus status = get("/auth/" + sessionId + "/status", SidecarLoginStatus.class);
+        return new LoginStatus(
+                status.sessionId(),
+                ProviderType.QQMUSIC,
+                loginState(status.state()),
+                status.credentialStored(),
+                status.message()
+        );
+    }
+
+    public LoginStatus logout() {
+        SidecarLoginStatus status = post(appendPath("/auth/logout"), Map.of(), SidecarLoginStatus.class);
+        return new LoginStatus(
+                status.sessionId(),
+                ProviderType.QQMUSIC,
+                loginState(status.state()),
+                status.credentialStored(),
+                status.message()
         );
     }
 
@@ -215,6 +251,17 @@ public class QQMusicSidecarClient {
             case "account_write" -> CapabilityEffect.ACCOUNT_WRITE;
             default -> CapabilityEffect.READ;
         };
+    }
+
+    private LoginState loginState(String value) {
+        if (value == null || value.isBlank()) {
+            return LoginState.FAILED;
+        }
+        try {
+            return LoginState.valueOf(value.strip().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return LoginState.FAILED;
+        }
     }
 
     private Map<String, Object> toToolResult(JsonNode root) {
@@ -457,6 +504,24 @@ public class QQMusicSidecarClient {
             String euin,
             @JsonProperty("generated_at") String generatedAt,
             Map<String, Object> data
+    ) {
+    }
+
+    private record SidecarLoginStart(
+            String sessionId,
+            String provider,
+            String state,
+            String qrCodeDataUrl,
+            String message
+    ) {
+    }
+
+    private record SidecarLoginStatus(
+            String sessionId,
+            String provider,
+            String state,
+            boolean credentialStored,
+            String message
     ) {
     }
 

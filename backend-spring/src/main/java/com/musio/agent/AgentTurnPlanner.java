@@ -42,23 +42,34 @@ public class AgentTurnPlanner {
     private final SpringAiChatModelFactory chatModelFactory;
     private final ObjectMapper objectMapper;
     private final AgentCapabilityRegistry capabilityRegistry;
+    private final AgentPolicyGate policyGate;
 
     public AgentTurnPlanner(
             SpringAiChatModelFactory chatModelFactory,
             ObjectMapper objectMapper
     ) {
-        this(chatModelFactory, objectMapper, new AgentCapabilityRegistry());
+        this(chatModelFactory, objectMapper, new AgentCapabilityRegistry(), null);
+    }
+
+    public AgentTurnPlanner(
+            SpringAiChatModelFactory chatModelFactory,
+            ObjectMapper objectMapper,
+            AgentCapabilityRegistry capabilityRegistry
+    ) {
+        this(chatModelFactory, objectMapper, capabilityRegistry, null);
     }
 
     @Autowired
     public AgentTurnPlanner(
             SpringAiChatModelFactory chatModelFactory,
             ObjectMapper objectMapper,
-            AgentCapabilityRegistry capabilityRegistry
+            AgentCapabilityRegistry capabilityRegistry,
+            AgentPolicyGate policyGate
     ) {
         this.chatModelFactory = chatModelFactory;
         this.objectMapper = objectMapper;
         this.capabilityRegistry = capabilityRegistry == null ? new AgentCapabilityRegistry() : capabilityRegistry;
+        this.policyGate = policyGate;
     }
 
     public AgentTurnPlan planTurn(
@@ -74,7 +85,7 @@ public class AgentTurnPlanner {
         }
         String memoryPreview = turnPlannerTaskMemoryPreview(taskMemory);
         Prompt prompt = new Prompt(List.of(
-                new SystemMessage(plannerInstruction()),
+                new SystemMessage(plannerInstruction(userMessage)),
                 new UserMessage("""
                         当前任务记忆：
                         %s
@@ -138,9 +149,9 @@ public class AgentTurnPlanner {
             List<AgentRequiredOutcome> requiredOutcomes = parseRequiredOutcomes(root.path("requiredOutcomes"));
             List<RecommendationSlot> recommendationSlots = parseRecommendationSlots(root.path("recommendationSlots"));
             List<String> avoidSongTitles = textArray(root.path("avoidSongTitles"));
-            List<AgentToolCall> calls = parseCalls(root.path("toolCalls"));
+            List<AgentToolCall> calls = parseCalls(root.path("toolCalls"), originalMessage);
             if (calls.isEmpty() && root.path("calls").isArray()) {
-                calls = parseCalls(root.path("calls"));
+                calls = parseCalls(root.path("calls"), originalMessage);
             }
             if (disposition == TurnDisposition.RESPOND_ONLY) {
                 calls = List.of();
@@ -173,13 +184,13 @@ public class AgentTurnPlanner {
         }
     }
 
-    private List<AgentToolCall> parseCalls(JsonNode callsNode) {
+    private List<AgentToolCall> parseCalls(JsonNode callsNode, String originalMessage) {
         if (!callsNode.isArray()) {
             return List.of();
         }
         List<AgentToolCall> calls = new ArrayList<>();
         for (JsonNode callNode : callsNode) {
-            parseCall(callNode).ifPresent(calls::add);
+            parseCall(callNode, originalMessage).ifPresent(calls::add);
             if (calls.size() >= MAX_TOOL_CALLS) {
                 break;
             }
@@ -187,7 +198,7 @@ public class AgentTurnPlanner {
         return List.copyOf(calls);
     }
 
-    private Optional<AgentToolCall> parseCall(JsonNode callNode) {
+    private Optional<AgentToolCall> parseCall(JsonNode callNode, String originalMessage) {
         if (!callNode.isObject()) {
             logRejectedTool("", "invalid_tool_call");
             return Optional.empty();
@@ -196,7 +207,7 @@ public class AgentTurnPlanner {
         if (toolName.isBlank()) {
             toolName = text(callNode, "name");
         }
-        if (!allowedPlannerTools().contains(toolName)) {
+        if (!allowedPlannerTools(originalMessage).contains(toolName)) {
             logRejectedTool(toolName, "unknown_tool");
             return Optional.empty();
         }
@@ -307,12 +318,12 @@ public class AgentTurnPlanner {
         return List.of("search", "recommend", "comments", "lyrics", "detail", "playlist", "profile", "playback").contains(taskType);
     }
 
-    private String plannerInstruction() {
+    private String plannerInstruction(String userMessage) {
         return """
                 你是 Musio 的 Turn Planner。只输出 JSON 对象，不要 markdown，不要解释。
                 所有用户输入都已经进入 Agent runtime；你的任务不是决定是否进入 Agent，而是决定本轮是否需要调用音乐能力。
 
-                已注册 Musio 能力：
+                本轮可用 Musio 能力：
                 %s
 
                 输出格式：
@@ -347,15 +358,18 @@ public class AgentTurnPlanner {
                 - 当前只读工具可以直接 use_tools；QQ 音乐账号收藏、账号歌单写入、公开评论等账号级写入能力当前没有开放工具，应输出 request_confirmation 或 unsupported。
                 - 不需要工具时不要为了展示能力而调用工具。
                 - 不要输出 chain-of-thought。
-                """.formatted(turnPlannerManifest().plannerToolList());
+                """.formatted(turnPlannerManifest(userMessage).plannerToolList());
     }
 
-    private Set<String> allowedPlannerTools() {
-        return Set.copyOf(turnPlannerManifest().names());
+    private Set<String> allowedPlannerTools(String userMessage) {
+        return Set.copyOf(turnPlannerManifest(userMessage).names());
     }
 
-    private AgentCapabilityManifest turnPlannerManifest() {
-        return new AgentCapabilityManifest(capabilityRegistry.manifest(true).capabilities().stream()
+    private AgentCapabilityManifest turnPlannerManifest(String userMessage) {
+        AgentCapabilityManifest manifest = policyGate == null
+                ? capabilityRegistry.manifest(true)
+                : policyGate.manifestFor(userMessage, null);
+        return new AgentCapabilityManifest(manifest.capabilities().stream()
                 .filter(capability -> !STEP_LOOP_ONLY_TOOLS.contains(capability.name()))
                 .toList());
     }
