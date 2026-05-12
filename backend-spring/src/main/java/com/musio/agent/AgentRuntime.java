@@ -619,7 +619,11 @@ public class AgentRuntime {
                 goal
         ));
         AgentLoopEvidence evidence = outcome.evidence();
-        PendingLocalPlaylistAdd pendingLocalPlaylistAdd = deferLocalPlaylistWrite
+        boolean loopHandledLocalPlaylistWrite = loopHandledLocalPlaylistWrite(evidence);
+        if (loopHandledLocalPlaylistWrite) {
+            taskMemoryService.clearPendingLocalPlaylistAdd(userId);
+        }
+        PendingLocalPlaylistAdd pendingLocalPlaylistAdd = deferLocalPlaylistWrite && !loopHandledLocalPlaylistWrite
                 ? savePendingLocalPlaylistAdd(userId, userMessage, evidence, taskMemory, previousTaskMemory)
                 : null;
         if (evidence.hasObservations()) {
@@ -695,6 +699,14 @@ public class AgentRuntime {
                 evidence.songs(),
                 "",
                 confirmationFor(pendingLocalPlaylistAdd));
+    }
+
+    static boolean loopHandledLocalPlaylistWrite(AgentLoopEvidence evidence) {
+        if (evidence == null || evidence.observations().isEmpty()) {
+            return false;
+        }
+        return evidence.observations().stream()
+                .anyMatch(observation -> AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(observation.toolName()));
     }
 
     private PendingLocalPlaylistAdd savePendingLocalPlaylistAdd(

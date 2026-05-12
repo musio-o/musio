@@ -2,6 +2,9 @@ package com.musio.agent;
 
 import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
+import com.musio.agent.loop.AgentLoopEvidence;
+import com.musio.agent.loop.AgentObservation;
+import com.musio.agent.loop.AgentObservationStatus;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -134,5 +137,47 @@ class AgentRuntimeTest {
                 List.of(AgentRequiredOutcome.RECOMMENDATION, AgentRequiredOutcome.LYRICS),
                 deferred.requiredOutcomes()
         );
+    }
+
+    @Test
+    void loopLocalPlaylistWriteObservationSuppressesLegacyPendingConfirmation() {
+        AgentLoopEvidence evidence = new AgentLoopEvidence(
+                List.of(new AgentObservation(
+                        "loop.step.2",
+                        AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST,
+                        Map.of("songId", "qqmusic:1"),
+                        AgentObservationStatus.SUCCESS,
+                        "{\"success\":true,\"requestedCount\":1,\"count\":1}",
+                        "已收藏",
+                        List.of()
+                )),
+                List.of(),
+                "playlist",
+                null,
+                List.of()
+        );
+
+        assertTrue(AgentRuntime.loopHandledLocalPlaylistWrite(evidence));
+    }
+
+    @Test
+    void readOnlyLoopEvidenceDoesNotSuppressLegacyPendingConfirmation() {
+        AgentLoopEvidence evidence = new AgentLoopEvidence(
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        AgentCapabilityRegistry.RECOMMEND_SONGS,
+                        Map.of("count", 1),
+                        AgentObservationStatus.SUCCESS,
+                        "{\"success\":true}",
+                        "已推荐",
+                        List.of()
+                )),
+                List.of(),
+                "recommend",
+                null,
+                List.of()
+        );
+
+        assertFalse(AgentRuntime.loopHandledLocalPlaylistWrite(evidence));
     }
 }
