@@ -48,7 +48,17 @@ export function AgentMessageList({
           return (
             <article key={message.id} className={`chat-message ${message.role} ${message.state} progress`}>
               <div className="chat-avatar">M</div>
-              <AgentProgressBubble message={message} />
+              <div className="chat-response-stack">
+                <AgentProgressBubble message={message} />
+                {message.confirmation ? (
+                  <ConfirmationActions
+                    messageId={message.id}
+                    confirmation={message.confirmation}
+                    messageState={message.state}
+                    onAction={onConfirmationAction}
+                  />
+                ) : null}
+              </div>
             </article>
           );
         }
@@ -67,7 +77,7 @@ export function AgentMessageList({
                   <RetainedTraceSteps
                     steps={message.traceSteps}
                     state={message.state}
-                    forceExpanded={message.state !== "done" || Boolean(message.confirmation)}
+                    forceExpanded={message.state !== "done" && !message.confirmation}
                   />
                   {message.content.trim() ? <MarkdownContent text={message.content} /> : null}
                   <InlineSongCards
@@ -349,8 +359,7 @@ function RetainedTraceStepRow({ step, index }: { step: TraceStep; index: number 
 function isProgressBubbleVisible(message: ChatMessage) {
   return message.role === "agent"
     && message.state === "streaming"
-    && !hasVisibleAnswerStarted(message)
-    && !message.confirmation;
+    && !hasVisibleAnswerStarted(message);
 }
 
 function hasAgentResponseBody(message: ChatMessage) {

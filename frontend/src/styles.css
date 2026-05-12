@@ -7271,6 +7271,16 @@ canvas.magnetic-dot-field::before {
   margin-top: 3px;
 }
 
+.chat-message.progress .chat-response-stack {
+  width: min(500px, calc(100% - 54px));
+  max-width: min(72%, 500px);
+}
+
+.chat-message.progress .chat-progress-bubble {
+  width: 100%;
+  max-width: 100%;
+}
+
 .chat-progress-bubble {
   width: min(500px, calc(100% - 54px));
   max-width: min(72%, 500px);
