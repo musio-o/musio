@@ -12,13 +12,15 @@ import java.util.Optional;
 
 @Component
 public class AgentCapabilityExecutor {
+    private final List<AgentCapabilityHandler> handlerList;
     private final Map<String, AgentCapabilityHandler> handlers;
     private final AgentToolExecutor readToolExecutor;
     private final MusioPlaylistCapabilityExecutor musioPlaylistCapabilityExecutor;
 
     @Autowired
     public AgentCapabilityExecutor(List<AgentCapabilityHandler> handlers) {
-        this.handlers = handlerMap(handlers);
+        this.handlerList = handlers == null ? List.of() : List.copyOf(handlers);
+        this.handlers = handlerMap(this.handlerList);
         this.readToolExecutor = null;
         this.musioPlaylistCapabilityExecutor = null;
     }
@@ -27,13 +29,14 @@ public class AgentCapabilityExecutor {
             AgentToolExecutor readToolExecutor,
             MusioPlaylistCapabilityExecutor musioPlaylistCapabilityExecutor
     ) {
+        this.handlerList = List.of();
         this.handlers = Map.of();
         this.readToolExecutor = readToolExecutor;
         this.musioPlaylistCapabilityExecutor = musioPlaylistCapabilityExecutor;
     }
 
     public boolean canExecute(String capabilityName) {
-        if (handlers.containsKey(capabilityName)) {
+        if (handlerFor(capabilityName) != null) {
             return true;
         }
         if (AgentCapabilityRegistry.ADD_SONG_TO_MUSIO_PLAYLIST.equals(capabilityName)) {
@@ -43,7 +46,7 @@ public class AgentCapabilityExecutor {
     }
 
     public AgentCapabilityValidationResult validate(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
-        AgentCapabilityHandler handler = handlers.get(capabilityName);
+        AgentCapabilityHandler handler = handlerFor(capabilityName);
         if (handler != null) {
             return handler.validate(state, capabilityName, arguments);
         }
@@ -54,7 +57,7 @@ public class AgentCapabilityExecutor {
     }
 
     public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
-        AgentCapabilityHandler handler = handlers.get(capabilityName);
+        AgentCapabilityHandler handler = handlerFor(capabilityName);
         if (handler != null) {
             return handler.execute(state, capabilityName, arguments);
         }
@@ -75,6 +78,22 @@ public class AgentCapabilityExecutor {
             return AgentCapabilityArgumentRules.validateMusioPlaylistRequiredArguments(arguments);
         }
         return AgentCapabilityValidationResult.accepted();
+    }
+
+    private AgentCapabilityHandler handlerFor(String capabilityName) {
+        AgentCapabilityHandler handler = handlers.get(capabilityName);
+        if (handler != null) {
+            return handler;
+        }
+        if (capabilityName == null || capabilityName.isBlank()) {
+            return null;
+        }
+        for (AgentCapabilityHandler candidate : handlerList) {
+            if (candidate != null && candidate.supports(capabilityName)) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     private Map<String, AgentCapabilityHandler> handlerMap(List<AgentCapabilityHandler> handlers) {

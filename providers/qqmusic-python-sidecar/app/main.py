@@ -8,10 +8,13 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from qqmusic_api.core.exceptions import CredentialError, LoginExpiredError, NotLoginError, RatelimitedError
 
+from .qqmusic_auth import QQMusicAuthService
 from .qqmusic_client import QQMusicClient
 from .schemas import (
     Comment,
     HealthResponse,
+    LoginStartResult,
+    LoginStatus,
     Lyrics,
     Playlist,
     Song,
@@ -26,6 +29,7 @@ from .schemas import (
 
 app = FastAPI(title="Musio QQ Music Sidecar", version="0.1.0")
 client = QQMusicClient()
+auth_service = QQMusicAuthService()
 
 _SOURCE_ID = "qqmusic"
 _CAPABILITIES = [
@@ -143,6 +147,21 @@ async def execute_tool(tool_name: str, payload: dict[str, Any] | None = None) ->
             return _tool_result(tool_name, "songs", count=len(songs), songs=songs)
         case _:
             raise HTTPException(status_code=404, detail=f"Unknown QQ Music tool: {tool_name}")
+
+
+@app.post("/auth/start", response_model=LoginStartResult)
+async def auth_start() -> LoginStartResult:
+    return auth_service.start_login()
+
+
+@app.get("/auth/{session_id}/status", response_model=LoginStatus)
+async def auth_status(session_id: str) -> LoginStatus:
+    return auth_service.check_login(session_id)
+
+
+@app.post("/auth/logout", response_model=LoginStatus)
+async def auth_logout() -> LoginStatus:
+    return auth_service.logout()
 
 
 @app.get("/search", response_model=list[Song])

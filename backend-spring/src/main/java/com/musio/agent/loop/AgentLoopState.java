@@ -26,7 +26,6 @@ public record AgentLoopState(
         recentHistory = recentHistory == null ? List.of() : List.copyOf(recentHistory);
         observations = observations == null ? List.of() : List.copyOf(observations);
         stepCount = Math.max(0, stepCount);
-        capabilityManifest = capabilityManifest == null ? AgentCapabilityManifest.empty() : capabilityManifest;
         requestedSongCount = Math.max(0, requestedSongCount);
         goal = goal == null ? new AgentGoal(userMessage, userMessage, "unknown", "new_task", false, false, false, false, requestedSongCount, List.of(), List.of()) : goal;
     }
@@ -40,7 +39,7 @@ public record AgentLoopState(
             List<AgentObservation> observations,
             int stepCount
     ) {
-        this(runId, userId, userMessage, recentHistory, taskMemory, observations, stepCount, AgentCapabilityManifest.empty(), 0, null);
+        this(runId, userId, userMessage, recentHistory, taskMemory, observations, stepCount, null, 0, null);
     }
 
     public AgentLoopState(

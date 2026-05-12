@@ -76,6 +76,22 @@ class UserMusicGene(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class LoginStartResult(BaseModel):
+    sessionId: str
+    provider: str = "qqmusic"
+    state: str
+    qrCodeDataUrl: str | None = None
+    message: str
+
+
+class LoginStatus(BaseModel):
+    sessionId: str
+    provider: str = "qqmusic"
+    state: str
+    credentialStored: bool
+    message: str
+
+
 class SourceCapability(BaseModel):
     name: str
     effect: str = "read"

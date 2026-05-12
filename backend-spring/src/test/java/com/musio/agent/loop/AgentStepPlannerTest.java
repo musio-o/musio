@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.capability.AgentCapability;
 import com.musio.agent.capability.AgentCapabilityArgumentContext;
 import com.musio.agent.capability.AgentCapabilityHandler;
+import com.musio.agent.capability.AgentCapabilityManifest;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.capability.AgentCapabilityValidationResult;
 import com.musio.agent.capability.CapabilityEffect;
@@ -160,6 +161,18 @@ class AgentStepPlannerTest {
                   "confidence": 0.9
                 }
                 """).isEmpty());
+    }
+
+    @Test
+    void doesNotFallbackToReadManifestWhenExplicitManifestIsEmpty() {
+        assertTrue(planner.parseAction("""
+                {
+                  "action": "tool_call",
+                  "toolName": "search_songs",
+                  "arguments": {"keyword": "周杰伦", "limit": 1},
+                  "confidence": 0.9
+                }
+                """, AgentCapabilityManifest.empty()).isEmpty());
     }
 
     @Test

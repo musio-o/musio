@@ -133,7 +133,7 @@ public class AgentStepPlanner {
             return Optional.empty();
         }
         try {
-            AgentCapabilityManifest effectiveManifest = manifest == null || manifest.isEmpty()
+            AgentCapabilityManifest effectiveManifest = manifest == null
                     ? capabilityRegistry.readManifest()
                     : manifest;
             JsonNode root = objectMapper.readTree(extractJsonObject(content.strip()));
@@ -182,7 +182,7 @@ public class AgentStepPlanner {
 
     private AgentCapabilityManifest manifestFor(AgentLoopState state) {
         AgentCapabilityManifest manifest = state == null ? null : state.capabilityManifest();
-        return manifest == null || manifest.isEmpty() ? capabilityRegistry.readManifest() : manifest;
+        return manifest == null ? capabilityRegistry.readManifest() : manifest;
     }
 
     private String plannerInstruction(AgentCapabilityManifest manifest) {

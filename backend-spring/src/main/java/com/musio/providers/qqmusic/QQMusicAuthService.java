@@ -19,6 +19,9 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -38,6 +41,8 @@ import java.util.regex.Pattern;
 
 @Service
 public class QQMusicAuthService {
+    private static final Logger log = LoggerFactory.getLogger(QQMusicAuthService.class);
+
     private static final String APP_ID = "716027609";
     private static final String QQ_MUSIC_APP_ID = "100497308";
     private static final String DAID = "383";
@@ -48,19 +53,42 @@ public class QQMusicAuthService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final QQMusicCredentialStore credentialStore;
+    private final QQMusicSidecarClient sidecarClient;
     private final Cache<String, QQMusicLoginSession> loginSessions = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofMinutes(10))
             .maximumSize(1000)
             .build();
+    private final Cache<String, Boolean> sidecarLoginSessions = Caffeine.newBuilder()
+            .expireAfterWrite(Duration.ofMinutes(10))
+            .maximumSize(1000)
+            .build();
+
+    @Autowired
+    public QQMusicAuthService(QQMusicCredentialStore credentialStore, QQMusicSidecarClient sidecarClient) {
+        this.credentialStore = credentialStore;
+        this.sidecarClient = sidecarClient;
+    }
 
     public QQMusicAuthService(QQMusicCredentialStore credentialStore) {
-        this.credentialStore = credentialStore;
+        this(credentialStore, null);
     }
 
     public LoginStartResult startLogin() {
+        if (sidecarClient != null) {
+            try {
+                LoginStartResult result = sidecarClient.startLogin();
+                sidecarLoginSessions.put(result.sessionId(), true);
+                log.info("QQMUSIC_AUTH_START backend=sidecar sessionId={} state={}", result.sessionId(), result.state());
+                return result;
+            } catch (RuntimeException error) {
+                log.warn("QQMUSIC_AUTH_START backend=sidecar status=fallback reason={}", message(error));
+                // Fall back to the built-in Java QR flow while sidecar auth is being stabilized.
+            }
+        }
         QQMusicLoginSession session = QQMusicLoginSession.create();
         QRCode qrCode = generateQrCode(session);
         loginSessions.put(session.sessionId(), session);
+        log.info("QQMUSIC_AUTH_START backend=java_fallback sessionId={} state={}", session.sessionId(), LoginState.NOT_SCANNED);
 
         return new LoginStartResult(
                 session.sessionId(),
@@ -72,6 +100,31 @@ public class QQMusicAuthService {
     }
 
     public LoginStatus checkLogin(String sessionId) {
+        if (sidecarClient != null && Boolean.TRUE.equals(sidecarLoginSessions.getIfPresent(sessionId))) {
+            try {
+                LoginStatus status = sidecarClient.checkLogin(sessionId);
+                if (status.state() == LoginState.DONE || status.state() == LoginState.EXPIRED || status.state() == LoginState.FAILED) {
+                    sidecarLoginSessions.invalidate(sessionId);
+                }
+                log.info(
+                        "QQMUSIC_AUTH_STATUS backend=sidecar sessionId={} state={} credentialStored={}",
+                        sessionId,
+                        status.state(),
+                        status.credentialStored()
+                );
+                return status;
+            } catch (RuntimeException e) {
+                sidecarLoginSessions.invalidate(sessionId);
+                log.warn("QQMUSIC_AUTH_STATUS backend=sidecar status=failed sessionId={} reason={}", sessionId, message(e));
+                return new LoginStatus(
+                        sessionId,
+                        ProviderType.QQMUSIC,
+                        LoginState.FAILED,
+                        credentialStore.exists(),
+                        "QQ Music sidecar login status unavailable: " + message(e)
+                );
+            }
+        }
         QQMusicLoginSession session = loginSessions.getIfPresent(sessionId);
         if (session == null) {
             return status(sessionId, LoginState.EXPIRED, "QR login session expired.");
@@ -81,13 +134,35 @@ public class QQMusicAuthService {
         if (status.state() == LoginState.DONE || status.state() == LoginState.EXPIRED || status.state() == LoginState.FAILED) {
             loginSessions.invalidate(sessionId);
         }
+        log.info(
+                "QQMUSIC_AUTH_STATUS backend=java_fallback sessionId={} state={} credentialStored={}",
+                sessionId,
+                status.state(),
+                status.credentialStored()
+        );
         return status;
     }
 
     public LoginStatus logout() {
-        credentialStore.delete();
         loginSessions.invalidateAll();
+        sidecarLoginSessions.invalidateAll();
+        if (sidecarClient != null) {
+            try {
+                LoginStatus status = sidecarClient.logout();
+                log.info("QQMUSIC_AUTH_LOGOUT backend=sidecar state={}", status.state());
+                return status;
+            } catch (RuntimeException error) {
+                log.warn("QQMUSIC_AUTH_LOGOUT backend=sidecar status=fallback reason={}", message(error));
+                // Fall back to deleting the shared credential file from Java.
+            }
+        }
+        credentialStore.delete();
+        log.info("QQMUSIC_AUTH_LOGOUT backend=java_fallback state={}", LoginState.LOGGED_OUT);
         return new LoginStatus("local", ProviderType.QQMUSIC, LoginState.LOGGED_OUT, false, "Logged out.");
+    }
+
+    private String message(RuntimeException error) {
+        return error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
     }
 
     private QRCode generateQrCode(QQMusicLoginSession session) {
