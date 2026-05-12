@@ -27,6 +27,7 @@ export function AppRouter() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
+  const activeSource = useMemo(() => activeSourceFromUrl(selectedSources), [selectedSources]);
   const player = usePlayerStore();
 
   useEffect(() => {
@@ -255,6 +256,8 @@ export function AppRouter() {
                 <AgentChatPanel
                   busy={busy}
                   disabledReason={musicOperationDisabledReason}
+                  selectedSources={selectedSources}
+                  activeSource={activeSource}
                   message={chatDraft}
                   messages={chatMessages}
                   onBusyChange={setBusy}
@@ -1092,4 +1095,14 @@ function selectedSourcesFromUrl(): string[] {
   return raw.split(",")
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function activeSourceFromUrl(selectedSources: string[]): string {
+  const params = new URLSearchParams(window.location.search);
+  const requested = sourceKey(params.get("activeSource") ?? "");
+  const normalizedSelectedSources = selectedSources.map(sourceKey);
+  if (requested && normalizedSelectedSources.includes(requested)) {
+    return requested;
+  }
+  return normalizedSelectedSources[0] ?? "qqmusic";
 }

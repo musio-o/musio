@@ -10,6 +10,8 @@ import { ChatMessage, mergeMessageSongs, mergeTraceStep } from "./chatTypes";
 type AgentChatPanelProps = {
   busy: boolean;
   disabledReason?: string | null;
+  selectedSources: string[];
+  activeSource: string;
   message: string;
   messages: ChatMessage[];
   onBusyChange: (busy: boolean) => void;
@@ -32,6 +34,8 @@ const quickPrompts: Array<{ label: string; prompt: string; Icon: LucideIcon }> =
 export function AgentChatPanel({
   busy,
   disabledReason,
+  selectedSources,
+  activeSource,
   message,
   messages,
   onBusyChange,
@@ -76,7 +80,7 @@ export function AgentChatPanel({
     onMessagesChange((current) => [...current, userMessage]);
     onBusyChange(true);
     try {
-      const run = await chatClient.startChat(userText, displayText);
+      const run = await chatClient.startChat(userText, displayText, { selectedSources, activeSource });
       const agentMessageId = crypto.randomUUID();
       onMessagesChange((current) => [
         ...current,

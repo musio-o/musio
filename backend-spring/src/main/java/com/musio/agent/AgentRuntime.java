@@ -27,6 +27,7 @@ import com.musio.model.AgentTaskMemory;
 import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
+import com.musio.model.SourceContext;
 import com.musio.memory.AgentTaskMemoryService;
 import com.musio.memory.MusicProfileService;
 import jakarta.annotation.PreDestroy;
@@ -109,6 +110,8 @@ public class AgentRuntime {
         try {
             String userId = conversationHistoryService.normalizeUserId(request.userId());
             AgentRunContext.setUserId(userId);
+            SourceContext sourceContext = request.sourceContext(userId);
+            AgentRunContext.setSourceContext(sourceContext);
             List<ConversationHistoryMessage> history = conversationHistoryService.load(userId);
             AgentTaskMemory taskMemory = taskMemoryService.read(userId);
             AgentTaskMemory previousTaskMemory = taskMemory;

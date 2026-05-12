@@ -1168,6 +1168,112 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void capsDisplayedRecommendationSongsToRequestedCountAfterRetry() {
+        AgentCapabilityHandler recommendationHandler = new OverfillingRecommendationCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
+        AgentStepAction action = new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "recommend_songs",
+                Map.of("request", "给我推荐 5 首适合深夜写代码听的歌", "count", 5),
+                "生成推荐",
+                0.9,
+                "开放推荐"
+        );
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(action, action, AgentStepAction.finalAnswer("结束", 0.9))),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler))
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                5,
+                new AgentGoal(
+                        "给我推荐 5 首适合深夜写代码听的歌",
+                        "给我推荐 5 首适合深夜写代码听的歌",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        5,
+                        List.of(),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION)
+                )
+        ));
+
+        assertEquals(2, evidence.observations().size());
+        assertEquals(5, evidence.songs().size());
+        assertEquals(List.of("第一首", "第二首", "第三首", "第四首", "第五首"), evidence.songs().stream().map(Song::title).toList());
+    }
+
+    @Test
+    void duplicateRecommendationRetryDoesNotSatisfySlotCoverage() {
+        AgentCapabilityHandler recommendationHandler = new DuplicateThenFillsRecommendationCapabilityHandler();
+        AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(recommendationHandler));
+        AgentStepAction action = new AgentStepAction(
+                AgentStepActionType.TOOL_CALL,
+                "recommend_songs",
+                Map.of(
+                        "request", "给我推荐 5 首适合深夜写代码听的歌",
+                        "count", 5,
+                        "slots", List.of(Map.of("slotId", "late_night_coding", "targetType", "scene", "target", "深夜写代码", "count", 5))
+                ),
+                "生成推荐",
+                0.9,
+                "开放推荐"
+        );
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(action, action, action, AgentStepAction.finalAnswer("结束", 0.9))),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper(),
+                registry,
+                new AgentCapabilityExecutor(List.of(recommendationHandler))
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(),
+                0,
+                registry.readManifest(),
+                5,
+                new AgentGoal(
+                        "给我推荐 5 首适合深夜写代码听的歌",
+                        "给我推荐 5 首适合深夜写代码听的歌",
+                        "recommend",
+                        "new_task",
+                        true,
+                        true,
+                        false,
+                        false,
+                        5,
+                        List.of(new com.musio.agent.recommendation.RecommendationSlot("late_night_coding", "scene", "深夜写代码", 5)),
+                        List.of(),
+                        List.of(AgentRequiredOutcome.RECOMMENDATION)
+                )
+        ));
+
+        assertEquals(3, evidence.observations().size());
+        assertEquals(5, evidence.songs().size());
+        assertEquals(List.of("第一首", "第二首", "第三首", "第四首", "第五首"), evidence.songs().stream().map(Song::title).toList());
+    }
+
+    @Test
     void completesCompositeRecommendationAfterAllRequiredOutcomesDespiteSkippedDuplicate() {
         AgentCapabilityHandler recommendationHandler = new StubRecommendationCapabilityHandler();
         MusioPlaylistCapabilityExecutor playlistExecutor = new StubPlaylistCapabilityExecutor("""
@@ -1383,6 +1489,97 @@ class AgentLoopRunnerTest {
             }
             return Optional.of("""
                     {"success":true,"requestedTotal":3,"resolvedTotal":2,"slotResults":[{"slotId":"xusong","requested":2,"resolved":1},{"slotId":"houxian","requested":1,"resolved":1}],"songs":[{"slotId":"xusong","id":"qqmusic:x2","provider":"QQMUSIC","title":"清明雨上","artists":["许嵩"],"album":"自定义","durationSeconds":240,"artworkUrl":null},{"slotId":"houxian","id":"qqmusic:h1","provider":"QQMUSIC","title":"西厢","artists":["后弦"],"album":"自定义","durationSeconds":240,"artworkUrl":null}]}
+                    """);
+        }
+    }
+
+    private static class OverfillingRecommendationCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "recommend_songs",
+                CapabilityEffect.READ,
+                "测试推荐能力。",
+                "{\"request\": string, \"count\": number}",
+                Set.of("request")
+        );
+        private int calls;
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            calls++;
+            if (calls == 1) {
+                return Optional.of("""
+                        {"success":true,"requestedTotal":5,"resolvedTotal":4,"songs":[{"id":"qqmusic:1","provider":"QQMUSIC","title":"第一首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:2","provider":"QQMUSIC","title":"第二首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:3","provider":"QQMUSIC","title":"第三首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:4","provider":"QQMUSIC","title":"第四首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null}]}
+                        """);
+            }
+            return Optional.of("""
+                    {"success":true,"requestedTotal":5,"resolvedTotal":4,"songs":[{"id":"qqmusic:5","provider":"QQMUSIC","title":"第五首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:6","provider":"QQMUSIC","title":"第六首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:7","provider":"QQMUSIC","title":"第七首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"id":"qqmusic:8","provider":"QQMUSIC","title":"第八首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null}]}
+                    """);
+        }
+    }
+
+    private static class DuplicateThenFillsRecommendationCapabilityHandler implements AgentCapabilityHandler {
+        private static final AgentCapability CAPABILITY = new AgentCapability(
+                "recommend_songs",
+                CapabilityEffect.READ,
+                "测试推荐能力。",
+                "{\"request\": string, \"count\": number, \"slots\": []}",
+                Set.of("request")
+        );
+        private int calls;
+
+        @Override
+        public List<AgentCapability> capabilities() {
+            return List.of(CAPABILITY);
+        }
+
+        @Override
+        public boolean supports(String capabilityName) {
+            return CAPABILITY.name().equals(capabilityName);
+        }
+
+        @Override
+        public AgentCapabilityValidationResult validateArguments(
+                String capabilityName,
+                Map<String, Object> arguments,
+                AgentCapabilityArgumentContext context
+        ) {
+            return AgentCapabilityValidationResult.accepted();
+        }
+
+        @Override
+        public Optional<String> execute(AgentLoopState state, String capabilityName, Map<String, Object> arguments) {
+            calls++;
+            if (calls == 1) {
+                return Optional.of("""
+                        {"success":true,"requestedTotal":5,"resolvedTotal":4,"slotResults":[{"slotId":"late_night_coding","requested":5,"resolved":4}],"songs":[{"slotId":"late_night_coding","id":"qqmusic:1","provider":"QQMUSIC","title":"第一首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"slotId":"late_night_coding","id":"qqmusic:2","provider":"QQMUSIC","title":"第二首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"slotId":"late_night_coding","id":"qqmusic:3","provider":"QQMUSIC","title":"第三首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null},{"slotId":"late_night_coding","id":"qqmusic:4","provider":"QQMUSIC","title":"第四首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null}]}
+                        """);
+            }
+            if (calls == 2) {
+                return Optional.of("""
+                        {"success":true,"requestedTotal":1,"resolvedTotal":1,"slotResults":[{"slotId":"late_night_coding","requested":1,"resolved":1}],"songs":[{"slotId":"late_night_coding","id":"qqmusic:1","provider":"QQMUSIC","title":"第一首","artists":["A"],"album":"测试","durationSeconds":180,"artworkUrl":null}]}
+                        """);
+            }
+            return Optional.of("""
+                    {"success":true,"requestedTotal":1,"resolvedTotal":1,"slotResults":[{"slotId":"late_night_coding","requested":1,"resolved":1}],"songs":[{"slotId":"late_night_coding","id":"qqmusic:5","provider":"QQMUSIC","title":"第五首","artists":["B"],"album":"测试","durationSeconds":180,"artworkUrl":null}]}
                     """);
         }
     }

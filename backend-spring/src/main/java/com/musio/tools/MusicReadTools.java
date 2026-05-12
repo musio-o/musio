@@ -54,7 +54,7 @@ public class MusicReadTools {
         this.taskMemoryService = taskMemoryService;
     }
 
-    @Tool(name = "search_songs", description = "Search QQ Music songs by keyword. Use this when the user asks to find songs, recommend tracks, or discover music.")
+    @Tool(name = "search_songs", description = "Search songs in the active music source by keyword. Use this when the user asks to find songs, recommend tracks, or discover music.")
     public String searchSongs(
             @ToolParam(description = "Search keyword, such as a song title, artist, mood, scene, or genre") String keyword,
             @ToolParam(description = "Maximum number of songs to return. Default 5, maximum 20") Integer limit) {
@@ -102,7 +102,7 @@ public class MusicReadTools {
                 )));
     }
 
-    @Tool(name = "get_song_detail", description = "Get details for one QQ Music song by provider-prefixed song id.")
+    @Tool(name = "get_song_detail", description = "Get details for one song in the active music source by provider-prefixed song id.")
     public String getSongDetail(
             @ToolParam(description = "Song id, preferably provider-prefixed, for example qqmusic:003OUlho2HcRHC") String songId) {
         return runTool("get_song_detail", Map.of("songId", songId), () -> {
@@ -111,7 +111,7 @@ public class MusicReadTools {
         });
     }
 
-    @Tool(name = "get_lyrics", description = "Get lyrics for one QQ Music song by provider-prefixed song id.")
+    @Tool(name = "get_lyrics", description = "Get lyrics for one song in the active music source by provider-prefixed song id.")
     public String getLyrics(
             @ToolParam(description = "Song id, preferably provider-prefixed, for example qqmusic:003OUlho2HcRHC") String songId) {
         return runTool("get_lyrics", Map.of("songId", songId), () -> {
@@ -163,7 +163,7 @@ public class MusicReadTools {
         });
     }
 
-    @Tool(name = "get_hot_comments", description = "Get hot comments for one QQ Music song. Use this for comment analysis or listener sentiment.")
+    @Tool(name = "get_hot_comments", description = "Get hot comments for one song in the active music source. Use this for comment analysis or listener sentiment.")
     public String getHotComments(
             @ToolParam(description = "Song id, preferably provider-prefixed, for example qqmusic:003OUlho2HcRHC") String songId,
             @ToolParam(description = "Maximum number of comments to return. Default 10, maximum 30") Integer limit) {
@@ -218,7 +218,7 @@ public class MusicReadTools {
         });
     }
 
-    @Tool(name = "get_user_playlists", description = "Get the current QQ Music user's playlists. Use this only after the user has logged in.")
+    @Tool(name = "get_user_playlists", description = "Get the active music source user's playlists. Use this only after the user has logged in.")
     public String getUserPlaylists(
             @ToolParam(description = "Maximum number of playlists to return. Default 20, maximum 50") Integer limit) {
         int actualLimit = clamp(limit, 20, 1, 50);
@@ -230,7 +230,7 @@ public class MusicReadTools {
         });
     }
 
-    @Tool(name = "get_playlist_songs", description = "Get songs in one QQ Music playlist by playlist id.")
+    @Tool(name = "get_playlist_songs", description = "Get songs in one active music source playlist by playlist id.")
     public String getPlaylistSongs(
             @ToolParam(description = "Playlist id, preferably provider-prefixed if available") String playlistId,
             @ToolParam(description = "Maximum number of songs to return. Default 20, maximum 50") Integer limit) {

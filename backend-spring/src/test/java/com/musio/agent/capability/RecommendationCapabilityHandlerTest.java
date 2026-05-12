@@ -247,6 +247,159 @@ class RecommendationCapabilityHandlerTest {
         assertFalse(orchestrator.lastAvoidSongTitles.contains("安静"));
     }
 
+    @Test
+    void retriesOnlyMissingRecommendationCount() throws Exception {
+        StubRecommendationOrchestrator orchestrator = new StubRecommendationOrchestrator();
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                orchestrator,
+                null,
+                objectMapper
+        );
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        AgentCapabilityRegistry.RECOMMEND_SONGS,
+                        Map.of("request", "给我推荐 5 首适合深夜写代码听的歌", "count", 5),
+                        AgentObservationStatus.SUCCESS,
+                        "{\"success\":true,\"requestedTotal\":5,\"resolvedTotal\":4}",
+                        "已匹配 4 首",
+                        List.of(
+                                song("qqmusic:1", "第一首"),
+                                song("qqmusic:2", "第二首"),
+                                song("qqmusic:3", "第三首"),
+                                song("qqmusic:4", "第四首")
+                        )
+                )),
+                1
+        );
+
+        String resultJson = handler.execute(
+                state,
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of("request", "给我推荐 5 首适合深夜写代码听的歌", "count", 5)
+        ).orElseThrow();
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(1, orchestrator.lastRequestedCount);
+        assertEquals(1, root.path("requestedTotal").asInt());
+        assertTrue(orchestrator.lastAvoidSongTitles.containsAll(List.of("第一首", "第二首", "第三首", "第四首")));
+    }
+
+    @Test
+    void retriesOnlyMissingRecommendationSlots() throws Exception {
+        StubRecommendationOrchestrator orchestrator = new StubRecommendationOrchestrator();
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                orchestrator,
+                null,
+                objectMapper
+        );
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "推荐两首许嵩的歌和一首后弦的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(new AgentObservation(
+                        "loop.step.1",
+                        AgentCapabilityRegistry.RECOMMEND_SONGS,
+                        Map.of(
+                                "request", "推荐两首许嵩的歌和一首后弦的歌",
+                                "slots", List.of(
+                                        Map.of("slotId", "xusong", "targetType", "artist", "target", "许嵩", "count", 2),
+                                        Map.of("slotId", "houxian", "targetType", "artist", "target", "后弦", "count", 1)
+                                )
+                        ),
+                        AgentObservationStatus.SUCCESS,
+                        "{\"success\":true,\"requestedTotal\":3,\"resolvedTotal\":1,\"slotResults\":[{\"slotId\":\"xusong\",\"requested\":2,\"resolved\":1},{\"slotId\":\"houxian\",\"requested\":1,\"resolved\":0}]}",
+                        "已匹配 1 首",
+                        List.of(song("qqmusic:x1", "断桥残雪"))
+                )),
+                1
+        );
+
+        String resultJson = handler.execute(
+                state,
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                Map.of(
+                        "request", "推荐两首许嵩的歌和一首后弦的歌",
+                        "slots", List.of(
+                                Map.of("slotId", "xusong", "targetType", "artist", "target", "许嵩", "count", 2),
+                                Map.of("slotId", "houxian", "targetType", "artist", "target", "后弦", "count", 1)
+                        )
+                )
+        ).orElseThrow();
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(2, orchestrator.lastRecommendationSlots.size());
+        assertEquals(1, orchestrator.lastRecommendationSlots.get(0).count());
+        assertEquals(1, orchestrator.lastRecommendationSlots.get(1).count());
+        assertEquals(2, root.path("requestedTotal").asInt());
+    }
+
+    @Test
+    void duplicateSlotRetryStillLeavesMissingSlotCount() throws Exception {
+        StubRecommendationOrchestrator orchestrator = new StubRecommendationOrchestrator();
+        RecommendationCapabilityHandler handler = new RecommendationCapabilityHandler(
+                orchestrator,
+                null,
+                objectMapper
+        );
+        Map<String, Object> arguments = Map.of(
+                "request", "给我推荐 5 首适合深夜写代码听的歌",
+                "slots", List.of(Map.of("slotId", "late_night_coding", "targetType", "scene", "target", "深夜写代码", "count", 5))
+        );
+        AgentLoopState state = new AgentLoopState(
+                "run-1",
+                "local",
+                "给我推荐 5 首适合深夜写代码听的歌",
+                List.of(),
+                AgentTaskMemory.empty("local"),
+                List.of(
+                        new AgentObservation(
+                                "loop.step.1",
+                                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                                arguments,
+                                AgentObservationStatus.SUCCESS,
+                                """
+                                {"success":true,"requestedTotal":5,"resolvedTotal":4,"slotResults":[{"slotId":"late_night_coding","requested":5,"resolved":4}],"songs":[{"slotId":"late_night_coding","id":"qqmusic:1","provider":"QQMUSIC","title":"第一首","artists":["A"]},{"slotId":"late_night_coding","id":"qqmusic:2","provider":"QQMUSIC","title":"第二首","artists":["A"]},{"slotId":"late_night_coding","id":"qqmusic:3","provider":"QQMUSIC","title":"第三首","artists":["A"]},{"slotId":"late_night_coding","id":"qqmusic:4","provider":"QQMUSIC","title":"第四首","artists":["A"]}]}
+                                """,
+                                "已匹配 4 首",
+                                List.of(song("qqmusic:1", "第一首"), song("qqmusic:2", "第二首"), song("qqmusic:3", "第三首"), song("qqmusic:4", "第四首"))
+                        ),
+                        new AgentObservation(
+                                "loop.step.2",
+                                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                                arguments,
+                                AgentObservationStatus.SUCCESS,
+                                """
+                                {"success":true,"requestedTotal":1,"resolvedTotal":1,"slotResults":[{"slotId":"late_night_coding","requested":1,"resolved":1}],"songs":[{"slotId":"late_night_coding","id":"qqmusic:1","provider":"QQMUSIC","title":"第一首","artists":["A"]}]}
+                                """,
+                                "重复匹配 1 首",
+                                List.of(song("qqmusic:1", "第一首"))
+                        )
+                ),
+                2
+        );
+
+        String resultJson = handler.execute(
+                state,
+                AgentCapabilityRegistry.RECOMMEND_SONGS,
+                arguments
+        ).orElseThrow();
+
+        var root = objectMapper.readTree(resultJson);
+        assertEquals(1, orchestrator.lastRecommendationSlots.size());
+        assertEquals("late_night_coding", orchestrator.lastRecommendationSlots.getFirst().slotId());
+        assertEquals(1, orchestrator.lastRecommendationSlots.getFirst().count());
+        assertEquals(1, root.path("requestedTotal").asInt());
+        assertTrue(orchestrator.lastAvoidSongTitles.containsAll(List.of("第一首", "第二首", "第三首", "第四首")));
+    }
+
     private AgentTaskMemory memoryWithRecentRecommendation(String title) {
         return new AgentTaskMemory(
                 "local",
@@ -271,8 +424,14 @@ class RecommendationCapabilityHandlerTest {
         );
     }
 
+    private static Song song(String id, String title) {
+        return new Song(id, ProviderType.QQMUSIC, title, List.of("测试歌手"), "测试专辑", 180, null);
+    }
+
     private static final class StubRecommendationOrchestrator extends RecommendationOrchestrator {
         private List<String> lastAvoidSongTitles = List.of();
+        private int lastRequestedCount;
+        private List<RecommendationSlot> lastRecommendationSlots = List.of();
 
         private StubRecommendationOrchestrator() {
             super(null, null, null, null);
@@ -287,6 +446,8 @@ class RecommendationCapabilityHandlerTest {
                 AgentTaskMemory taskMemory
         ) {
             lastAvoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
+            lastRequestedCount = requestedCount;
+            lastRecommendationSlots = List.of();
             Song song = new Song("qqmusic:quiet", ProviderType.QQMUSIC, "安静", List.of("周杰伦"), "范特西", 334, null);
             ResolvedRecommendation resolved = new ResolvedRecommendation(song, "钢琴和慢速旋律适合深夜专注。", "安静 周杰伦");
             RecommendationResult result = new RecommendationResult(
@@ -306,6 +467,8 @@ class RecommendationCapabilityHandlerTest {
                 AgentTaskMemory taskMemory
         ) {
             lastAvoidSongTitles = avoidSongTitles == null ? List.of() : List.copyOf(avoidSongTitles);
+            lastRequestedCount = recommendationSlots == null ? 0 : recommendationSlots.stream().mapToInt(RecommendationSlot::count).sum();
+            lastRecommendationSlots = recommendationSlots == null ? List.of() : List.copyOf(recommendationSlots);
             Song one = new Song("qqmusic:x1", ProviderType.QQMUSIC, "断桥残雪", List.of("许嵩"), "自定义", 240, null);
             Song two = new Song("qqmusic:x2", ProviderType.QQMUSIC, "清明雨上", List.of("许嵩"), "自定义", 240, null);
             Song three = new Song("qqmusic:h1", ProviderType.QQMUSIC, "西厢", List.of("后弦"), "自定义", 240, null);

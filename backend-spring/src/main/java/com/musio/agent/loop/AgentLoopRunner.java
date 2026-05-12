@@ -886,16 +886,7 @@ public class AgentLoopRunner {
         }
         List<RecommendationSlot> slots = recommendationSlots(state, action);
         if (!slots.isEmpty()) {
-            Map<String, Integer> resolvedBySlot = new LinkedHashMap<>();
-            for (AgentObservation observation : state.observations()) {
-                if (observation.status() != AgentObservationStatus.SUCCESS || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())) {
-                    continue;
-                }
-                Map<String, Integer> observationSlots = resolvedSlots(observation);
-                for (Map.Entry<String, Integer> entry : observationSlots.entrySet()) {
-                    resolvedBySlot.merge(entry.getKey(), entry.getValue(), Integer::sum);
-                }
-            }
+            Map<String, Integer> resolvedBySlot = resolvedRecommendationSlots(state);
             if (resolvedBySlot.isEmpty()) {
                 return successfulRecommendationSongIds(state).size() >= RecommendationSlots.totalCount(slots);
             }
@@ -949,27 +940,60 @@ public class AgentLoopRunner {
         return songIds;
     }
 
-    private Map<String, Integer> resolvedSlots(AgentObservation observation) {
-        if (observation == null || observation.resultJson().isBlank()) {
+    private Map<String, Integer> resolvedRecommendationSlots(AgentLoopState state) {
+        if (state == null || state.observations() == null) {
             return Map.of();
         }
-        try {
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(observation.resultJson());
-            com.fasterxml.jackson.databind.JsonNode slotResults = root.path("slotResults");
-            if (!slotResults.isArray()) {
-                return Map.of();
+        Map<String, LinkedHashSet<String>> idsBySlot = new LinkedHashMap<>();
+        Map<String, Integer> fallbackBySlot = new LinkedHashMap<>();
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())
+                    || observation.resultJson().isBlank()) {
+                continue;
             }
+            try {
+                com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(observation.resultJson());
+                readRecommendationSlotSongIds(root.path("songs"), idsBySlot);
+                readRecommendationSlotSongIds(root.path("recommendations"), idsBySlot);
+                mergeSlotResultCounts(root.path("slotResults"), fallbackBySlot);
+            } catch (Exception ignored) {
+                // Slot coverage is an optimization; song-level recommendation counts remain available.
+            }
+        }
+        if (!idsBySlot.isEmpty()) {
             Map<String, Integer> values = new LinkedHashMap<>();
-            for (com.fasterxml.jackson.databind.JsonNode slotResult : slotResults) {
-                String slotId = slotResult.path("slotId").asText("");
-                int resolved = slotResult.path("resolved").asInt(0);
-                if (!slotId.isBlank() && resolved > 0) {
-                    values.put(slotId, resolved);
-                }
+            for (Map.Entry<String, LinkedHashSet<String>> entry : idsBySlot.entrySet()) {
+                values.put(entry.getKey(), entry.getValue().size());
             }
-            return values;
-        } catch (Exception ignored) {
-            return Map.of();
+            return Map.copyOf(values);
+        }
+        return Map.copyOf(fallbackBySlot);
+    }
+
+    private void readRecommendationSlotSongIds(JsonNode songsNode, Map<String, LinkedHashSet<String>> idsBySlot) {
+        if (songsNode == null || !songsNode.isArray()) {
+            return;
+        }
+        for (JsonNode songNode : songsNode) {
+            String slotId = songNode.path("slotId").asText("");
+            String songId = songNode.path("id").asText(songNode.path("songId").asText(""));
+            if (!slotId.isBlank() && !songId.isBlank()) {
+                idsBySlot.computeIfAbsent(slotId.strip(), ignored -> new LinkedHashSet<>()).add(songId.strip());
+            }
+        }
+    }
+
+    private void mergeSlotResultCounts(JsonNode slotResults, Map<String, Integer> resolvedBySlot) {
+        if (slotResults == null || !slotResults.isArray()) {
+            return;
+        }
+        for (JsonNode slotResult : slotResults) {
+            String slotId = slotResult.path("slotId").asText("");
+            int resolved = slotResult.path("resolved").asInt(0);
+            if (!slotId.isBlank() && resolved > 0) {
+                resolvedBySlot.merge(slotId.strip(), resolved, Integer::sum);
+            }
         }
     }
 
@@ -1015,7 +1039,51 @@ public class AgentLoopRunner {
     }
 
     private AgentLoopEvidence evidence(AgentLoopState state) {
-        return observationBuilder.evidence(state == null ? List.of() : state.observations(), completedTaskType(state == null ? List.of() : state.observations()));
+        AgentLoopEvidence evidence = observationBuilder.evidence(
+                state == null ? List.of() : state.observations(),
+                completedTaskType(state == null ? List.of() : state.observations())
+        );
+        List<Song> displaySongs = displaySongs(state, evidence);
+        if (displaySongs.equals(evidence.songs())) {
+            return evidence;
+        }
+        Song targetSong = displaySongs.isEmpty() ? evidence.targetSong() : displaySongs.getFirst();
+        return new AgentLoopEvidence(
+                evidence.observations(),
+                displaySongs,
+                evidence.completedTaskType(),
+                targetSong,
+                evidence.observationSummaries()
+        );
+    }
+
+    private List<Song> displaySongs(AgentLoopState state, AgentLoopEvidence evidence) {
+        if (state == null || evidence == null || evidence.songs().isEmpty() || !hasRecommendationObservation(evidence)) {
+            return evidence == null ? List.of() : evidence.songs();
+        }
+        int requestedCount = requestedDisplaySongCount(state);
+        if (requestedCount <= 0 || evidence.songs().size() <= requestedCount) {
+            return evidence.songs();
+        }
+        return evidence.songs().stream()
+                .limit(requestedCount)
+                .toList();
+    }
+
+    private boolean hasRecommendationObservation(AgentLoopEvidence evidence) {
+        return evidence != null && evidence.observations().stream()
+                .anyMatch(observation -> observation.status() == AgentObservationStatus.SUCCESS
+                        && AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName()));
+    }
+
+    private int requestedDisplaySongCount(AgentLoopState state) {
+        if (state == null) {
+            return 0;
+        }
+        if (state.goal() != null && state.goal().recommendationTotalCount() > 0) {
+            return state.goal().recommendationTotalCount();
+        }
+        return state.requestedSongCount();
     }
 
     private AgentLoopOutcome outcome(AgentLoopOutcomeType type, AgentLoopState state, String reason) {

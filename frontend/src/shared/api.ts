@@ -16,6 +16,11 @@ import {
 
 const API_BASE = "";
 
+export type ChatSourceContext = {
+  selectedSources: string[];
+  activeSource: string;
+};
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -62,10 +67,16 @@ export const api = {
   logoutProvider: (provider: string) => request<LoginStatus>(`/api/providers/${provider}/logout`, { method: "POST" }),
   startLogin: () => request<LoginStartResult>("/api/auth/qqmusic/qr"),
   loginStatus: (sessionId: string) => request<LoginStatus>(`/api/auth/qqmusic/qr/${sessionId}/status`),
-  startChat: (message: string, displayMessage?: string) =>
+  startChat: (message: string, displayMessage?: string, sourceContext?: ChatSourceContext) =>
     request<ChatRunResponse>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ userId: "local", message, displayMessage })
+      body: JSON.stringify({
+        userId: "local",
+        message,
+        displayMessage,
+        selectedSources: sourceContext?.selectedSources,
+        activeSource: sourceContext?.activeSource
+      })
     }),
   confirmChatRun: (runId: string, actionId: string, approved: boolean, selectedSongIds: string[] = []) =>
     request<ChatRunResponse>(`/api/chat/runs/${encodeURIComponent(runId)}/confirm`, {

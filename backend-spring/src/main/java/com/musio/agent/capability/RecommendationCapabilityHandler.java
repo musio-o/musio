@@ -19,6 +19,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -111,9 +112,13 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
         if (request.isBlank()) {
             request = state == null ? "" : state.userMessage();
         }
-        List<RecommendationSlot> slots = requestedSlots(safeArguments, state);
-        int count = slots.isEmpty()
+        List<RecommendationSlot> requestedSlots = requestedSlots(safeArguments, state);
+        List<RecommendationSlot> slots = remainingSlots(state, requestedSlots);
+        int requestedCount = requestedSlots.isEmpty()
                 ? integer(safeArguments, "count", state == null ? 0 : state.requestedSongCount())
+                : RecommendationSlots.totalCount(requestedSlots);
+        int count = slots.isEmpty()
+                ? remainingCount(state, requestedCount)
                 : RecommendationSlots.totalCount(slots);
         List<String> excludedTitles = excludedTitles(safeArguments, state);
         RecommendationResponse response = slots.isEmpty()
@@ -132,6 +137,105 @@ public class RecommendationCapabilityHandler implements AgentCapabilityHandler {
                         state == null ? null : state.taskMemory()
                 );
         return Optional.of(writeResult(response, slots, count));
+    }
+
+    private int remainingCount(AgentLoopState state, int requestedCount) {
+        int resolved = successfulRecommendationSongIds(state).size();
+        return Math.max(1, requestedCount - resolved);
+    }
+
+    private List<RecommendationSlot> remainingSlots(AgentLoopState state, List<RecommendationSlot> requestedSlots) {
+        List<RecommendationSlot> slots = RecommendationSlots.normalize(requestedSlots);
+        if (slots.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Integer> resolvedBySlot = resolvedRecommendationSlots(state);
+        if (resolvedBySlot.isEmpty()) {
+            return slots;
+        }
+        List<RecommendationSlot> remaining = new ArrayList<>();
+        for (RecommendationSlot slot : slots) {
+            int missing = slot.count() - resolvedBySlot.getOrDefault(slot.slotId(), 0);
+            if (missing > 0) {
+                remaining.add(new RecommendationSlot(slot.slotId(), slot.targetType(), slot.target(), missing));
+            }
+        }
+        return remaining;
+    }
+
+    private Set<String> successfulRecommendationSongIds(AgentLoopState state) {
+        Set<String> songIds = new LinkedHashSet<>();
+        if (state == null || state.observations() == null) {
+            return songIds;
+        }
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())) {
+                continue;
+            }
+            observation.songs().stream()
+                    .filter(song -> song != null && song.id() != null && !song.id().isBlank())
+                    .map(song -> song.id().strip())
+                    .forEach(songIds::add);
+        }
+        return songIds;
+    }
+
+    private Map<String, Integer> resolvedRecommendationSlots(AgentLoopState state) {
+        if (state == null || state.observations() == null) {
+            return Map.of();
+        }
+        Map<String, LinkedHashSet<String>> idsBySlot = new LinkedHashMap<>();
+        Map<String, Integer> fallbackBySlot = new LinkedHashMap<>();
+        for (AgentObservation observation : state.observations()) {
+            if (observation.status() != AgentObservationStatus.SUCCESS
+                    || !AgentCapabilityRegistry.RECOMMEND_SONGS.equals(observation.toolName())
+                    || observation.resultJson().isBlank()) {
+                continue;
+            }
+            try {
+                com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(observation.resultJson());
+                readRecommendationSlotSongIds(root.path("songs"), idsBySlot);
+                readRecommendationSlotSongIds(root.path("recommendations"), idsBySlot);
+                mergeSlotResultCounts(root.path("slotResults"), fallbackBySlot);
+            } catch (Exception ignored) {
+                // Missing slot metadata only affects retry granularity; normal song-level retry still works.
+            }
+        }
+        if (!idsBySlot.isEmpty()) {
+            Map<String, Integer> values = new LinkedHashMap<>();
+            for (Map.Entry<String, LinkedHashSet<String>> entry : idsBySlot.entrySet()) {
+                values.put(entry.getKey(), entry.getValue().size());
+            }
+            return Map.copyOf(values);
+        }
+        return Map.copyOf(fallbackBySlot);
+    }
+
+    private void readRecommendationSlotSongIds(com.fasterxml.jackson.databind.JsonNode songs, Map<String, LinkedHashSet<String>> idsBySlot) {
+        if (songs == null || !songs.isArray()) {
+            return;
+        }
+        for (com.fasterxml.jackson.databind.JsonNode song : songs) {
+            String slotId = song.path("slotId").asText("");
+            String songId = song.path("id").asText(song.path("songId").asText(""));
+            if (!slotId.isBlank() && !songId.isBlank()) {
+                idsBySlot.computeIfAbsent(slotId.strip(), ignored -> new LinkedHashSet<>()).add(songId.strip());
+            }
+        }
+    }
+
+    private void mergeSlotResultCounts(com.fasterxml.jackson.databind.JsonNode slotResults, Map<String, Integer> resolvedBySlot) {
+        if (slotResults == null || !slotResults.isArray()) {
+            return;
+        }
+        for (com.fasterxml.jackson.databind.JsonNode slotResult : slotResults) {
+            String slotId = slotResult.path("slotId").asText("");
+            int resolved = slotResult.path("resolved").asInt(0);
+            if (!slotId.isBlank() && resolved > 0) {
+                resolvedBySlot.merge(slotId.strip(), resolved, Integer::sum);
+            }
+        }
     }
 
     private MusioConfig.Ai ai() {
