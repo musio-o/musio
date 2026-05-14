@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Activity, Cable, FileText, ListMusic, MessageCircle, MessageSquare, Play, Search, Terminal, Trash2 } from "lucide-react";
 import { api } from "../shared/api";
 import { EventLog, ProviderStatus, Song, SongComment, SystemStatus } from "../shared/types";
@@ -29,6 +29,22 @@ export function AppRouter() {
   const selectedSources = useMemo(() => selectedSourcesFromUrl(), []);
   const activeSource = useMemo(() => activeSourceFromUrl(selectedSources), [selectedSources]);
   const player = usePlayerStore();
+  const chatRhythmActive = Boolean(player.state.currentSong && !player.state.paused);
+  const chatRhythmLevel = useMemo(() => {
+    if (!chatRhythmActive) {
+      return 0;
+    }
+    const levels = player.state.spectrumLevels ?? [];
+    const sample = levels.slice(0, Math.min(18, levels.length));
+    if (sample.length === 0) {
+      return 0.28;
+    }
+    const average = sample.reduce((total, level) => total + level, 0) / sample.length;
+    return Math.min(1, Math.max(0.18, average / 82));
+  }, [chatRhythmActive, player.state.spectrumLevels]);
+  const chatRhythmStyle = {
+    "--chat-pulse-level": chatRhythmLevel.toFixed(3)
+  } as CSSProperties;
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1_000);
@@ -223,7 +239,13 @@ export function AppRouter() {
           <section className="workbench-stage">
             <MagneticDotField />
             <TimeBackdrop now={now} />
-            <section className={`radio-workbench ${drawerOpen ? "drawer-open" : ""}`}>
+            <section
+              className={`radio-workbench ${drawerOpen ? "drawer-open" : ""} ${chatRhythmActive ? "is-playing" : ""}`}
+              style={chatRhythmStyle}
+            >
+              <span className="radio-rhythm-glow" aria-hidden="true" />
+              <span className="radio-rhythm-edge" aria-hidden="true" />
+              <span className="radio-rhythm-wave" aria-hidden="true" />
               <header className="radio-header">
                 <div className="radio-brand">
                   <div className="radio-avatar">M</div>
