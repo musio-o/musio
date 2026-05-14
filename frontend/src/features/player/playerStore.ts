@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { PlaybackMode, PlayerState, Song, SyncedLyricLine } from "../../shared/types";
+import { PlaybackMode, PlayerState, PlayerStateSyncPayload, Song, SyncedLyricLine } from "../../shared/types";
 import { playerClient } from "./playerClient";
 
 const PLAYBACK_MODES: PlaybackMode[] = ["SEQUENTIAL", "REPEAT_ONE", "REPEAT_ALL", "SHUFFLE"];
@@ -13,6 +13,7 @@ const IDLE_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6)
 const QUIET_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const PLAYER_QUEUE_STORAGE_KEY = "musio.player.queue.v1";
 const PLAYER_QUEUE_STORAGE_VERSION = 1;
+const PLAYER_STATE_SYNC_DEBOUNCE_MS = 650;
 
 type StoredPlayerQueueState = {
   version: typeof PLAYER_QUEUE_STORAGE_VERSION;
@@ -62,6 +63,8 @@ export function usePlayerStore() {
   const recoveryInFlightRef = useRef(false);
   const recoveryAttemptsRef = useRef(0);
   const lastProgressRef = useRef({ positionSeconds: 0, updatedAt: 0 });
+  const playerStateSyncTimeoutRef = useRef<number | null>(null);
+  const lastSyncedPlayerSignatureRef = useRef("");
 
   useEffect(() => {
     stateRef.current = state;
@@ -70,6 +73,43 @@ export function usePlayerStore() {
   useEffect(() => {
     persistPlayerQueueState(state);
   }, [state.currentIndex, state.currentSong?.id, state.playbackMode, state.queue]);
+
+  useEffect(() => {
+    if (playerStateSyncTimeoutRef.current !== null) {
+      window.clearTimeout(playerStateSyncTimeoutRef.current);
+    }
+    playerStateSyncTimeoutRef.current = window.setTimeout(() => {
+      playerStateSyncTimeoutRef.current = null;
+      const snapshot = playerStateSyncSnapshot(stateRef.current);
+      const signature = playerStateSyncSignature(snapshot);
+      if (signature === lastSyncedPlayerSignatureRef.current) {
+        return;
+      }
+      void playerClient.syncState(snapshot)
+        .then(() => {
+          lastSyncedPlayerSignatureRef.current = signature;
+        })
+        .catch(() => {
+          // Player memory should not interrupt local playback if the backend is temporarily unavailable.
+        });
+    }, PLAYER_STATE_SYNC_DEBOUNCE_MS);
+
+    return () => {
+      if (playerStateSyncTimeoutRef.current !== null) {
+        window.clearTimeout(playerStateSyncTimeoutRef.current);
+        playerStateSyncTimeoutRef.current = null;
+      }
+    };
+  }, [
+    state.currentIndex,
+    state.currentSong?.id,
+    state.durationSeconds,
+    state.lyricLine,
+    state.paused,
+    state.playbackMode,
+    state.positionSeconds,
+    state.queue
+  ]);
 
   useEffect(() => {
     const audio = new Audio();
@@ -733,6 +773,36 @@ function persistPlayerQueueState(state: PlayerState) {
   } catch {
     // localStorage can be full or blocked by browser settings. Playback should keep working in memory.
   }
+}
+
+function playerStateSyncSnapshot(state: PlayerState): PlayerStateSyncPayload {
+  return {
+    currentSong: state.currentSong,
+    queue: state.queue,
+    currentIndex: state.currentIndex,
+    paused: state.paused,
+    positionSeconds: state.positionSeconds,
+    durationSeconds: state.durationSeconds,
+    playbackMode: state.playbackMode,
+    lyricLine: state.lyricLine
+  };
+}
+
+function playerStateSyncSignature(state: PlayerStateSyncPayload) {
+  return JSON.stringify({
+    currentSongId: state.currentSong?.id ?? null,
+    queue: state.queue.map((song) => ({
+      id: song.id,
+      title: song.title,
+      artists: song.artists
+    })),
+    currentIndex: state.currentIndex,
+    paused: state.paused,
+    positionSeconds: state.positionSeconds,
+    durationSeconds: state.durationSeconds,
+    playbackMode: state.playbackMode,
+    lyricLine: state.lyricLine
+  });
 }
 
 function normalizeStoredSong(value: unknown): Song | null {

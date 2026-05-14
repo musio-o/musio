@@ -72,20 +72,15 @@ public class MemoryReadPlanValidator {
     }
 
     private List<MemoryReadItem> mergeItems(List<MemoryReadItem> items) {
-        Map<MemoryType, MergedItem> merged = new LinkedHashMap<>();
+        Map<MergeKey, MergedItem> merged = new LinkedHashMap<>();
         for (MemoryReadItem item : items) {
-            MergedItem value = merged.computeIfAbsent(item.type(), ignored -> new MergedItem(item.type()));
+            MergeKey key = new MergeKey(item.type(), item.scope(), item.query());
+            MergedItem value = merged.computeIfAbsent(key, ignored -> new MergedItem(item.type(), item.scope(), item.query()));
             value.fields.addAll(item.fields());
             value.priority = Math.max(value.priority, item.priority());
             value.limit = Math.max(value.limit, item.limit());
-            if (value.query.isBlank() && !item.query().isBlank()) {
-                value.query = item.query();
-            }
             if (value.reason.isBlank() && !item.reason().isBlank()) {
                 value.reason = item.reason();
-            }
-            if ("session".equals(value.scope) && !"session".equals(item.scope())) {
-                value.scope = item.scope();
             }
         }
         return merged.values().stream()
@@ -121,17 +116,22 @@ public class MemoryReadPlanValidator {
         return value.substring(0, limit);
     }
 
+    private record MergeKey(MemoryType type, String scope, String query) {
+    }
+
     private static final class MergedItem {
         private final MemoryType type;
         private final LinkedHashSet<String> fields = new LinkedHashSet<>();
-        private String query = "";
-        private String scope = "session";
+        private final String query;
+        private final String scope;
         private int priority = 0;
         private int limit = 1;
         private String reason = "";
 
-        private MergedItem(MemoryType type) {
+        private MergedItem(MemoryType type, String scope, String query) {
             this.type = type;
+            this.scope = scope;
+            this.query = query;
         }
     }
 }

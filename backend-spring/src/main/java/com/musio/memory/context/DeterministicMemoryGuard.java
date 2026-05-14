@@ -22,8 +22,10 @@ public class DeterministicMemoryGuard {
             items.add(item(MemoryType.PENDING_ACTION, List.of("pendingLocalPlaylistAdd"), 100, 1, "存在待确认本地歌单写入。"));
         }
         if (mentionsPreviousSong(message)) {
-            items.add(item(MemoryType.TASK_MEMORY, List.of("lastTargetSong", "lastResultSongs"), 100, 3, "用户使用这首/刚才那首等指代。"));
-            items.add(item(MemoryType.CURRENT_STATE, List.of("currentPlayback"), 75, 1, "预留当前播放状态读取。"));
+            items.add(item(MemoryType.TASK_MEMORY, List.of("lastTargetSong", "lastResultSongs", "lastRecommendationSlots"), 100, 5, "用户使用这首/刚才那首等指代，优先读取 Agent 最近推荐和结果。"));
+        }
+        if (mentionsExplicitPlayerReference(message)) {
+            items.add(item(MemoryType.CURRENT_STATE, currentStateFields(message), "current", 90, 3, "用户明确引用当前播放或播放器队列。"));
         }
         if (containsAny(message, "加入", "收藏", "保存", "歌单", "确认")) {
             items.add(item(MemoryType.PENDING_ACTION, List.of("pendingLocalPlaylistAdd"), 95, 1, "写入或确认意图需要读取待确认动作。"));
@@ -53,7 +55,11 @@ public class DeterministicMemoryGuard {
     }
 
     private MemoryReadItem item(MemoryType type, List<String> fields, int priority, int limit, String reason) {
-        return new MemoryReadItem(type, fields, "", "session", priority, limit, reason);
+        return item(type, fields, "session", priority, limit, reason);
+    }
+
+    private MemoryReadItem item(MemoryType type, List<String> fields, String scope, int priority, int limit, String reason) {
+        return new MemoryReadItem(type, fields, "", scope, priority, limit, reason);
     }
 
     private List<MemoryReadItem> dedupe(List<MemoryReadItem> items) {
@@ -70,6 +76,39 @@ public class DeterministicMemoryGuard {
 
     private boolean mentionsPreviousSong(String normalized) {
         return containsAny(normalized, "这首", "这歌", "刚才那首", "上一首", "上首", "刚刚那首", "刚才推荐");
+    }
+
+    private boolean mentionsExplicitPlayerReference(String normalized) {
+        return containsAny(
+                normalized,
+                "当前播放",
+                "正在播放",
+                "正在放",
+                "正在播",
+                "现在播放",
+                "现在放",
+                "现在播",
+                "播放器里",
+                "播放器中",
+                "播放队列",
+                "队列上一首",
+                "队列里",
+                "播放列表"
+        );
+    }
+
+    private List<String> currentStateFields(String normalized) {
+        LinkedHashSet<String> fields = new LinkedHashSet<>();
+        if (containsAny(normalized, "当前播放", "正在播放", "正在放", "正在播", "现在播放", "现在放", "现在播", "播放器里", "播放器中")) {
+            fields.add("currentPlayback");
+        }
+        if (containsAny(normalized, "播放队列", "队列上一首", "队列里", "播放列表")) {
+            fields.add("queueState");
+        }
+        if (fields.isEmpty()) {
+            fields.add("currentPlayback");
+        }
+        return List.copyOf(fields);
     }
 
     private boolean containsAny(String value, String... needles) {

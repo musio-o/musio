@@ -163,6 +163,11 @@ export type PlayerState = {
   spectrumLevels: number[];
 };
 
+export type PlayerStateSyncPayload = Pick<
+  PlayerState,
+  "currentSong" | "queue" | "currentIndex" | "paused" | "positionSeconds" | "durationSeconds" | "playbackMode" | "lyricLine"
+>;
+
 export type MusioPlaylistItem = {
   id: string;
   playlistId: string;

@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.loop.AgentLoopState;
 import com.musio.agent.loop.AgentObservation;
 import com.musio.agent.loop.AgentObservationStatus;
+import com.musio.memory.context.MemoryEvidence;
+import com.musio.memory.context.MemoryType;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Song;
 
@@ -39,6 +41,15 @@ final class AgentCapabilityStateFacts {
                 addSongId(ids, song);
             }
             ids.addAll(songIdsFromResultJson(observation.resultJson()));
+        }
+        if (state.memoryContext() != null) {
+            for (MemoryEvidence evidence : state.memoryContext().evidence()) {
+                if (evidence == null || evidence.type() != MemoryType.CURRENT_STATE) {
+                    continue;
+                }
+                addTextId(ids, evidence.sourceId());
+                ids.addAll(providerIdsInText(evidence.text()));
+            }
         }
         ids.addAll(providerIdsInText(userMessage));
         return ids;

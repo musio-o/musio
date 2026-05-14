@@ -16,6 +16,8 @@ import com.musio.agent.recommendation.RecommendationSlots;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.events.AgentEventBus;
+import com.musio.memory.context.MemoryEvidence;
+import com.musio.memory.context.MemoryType;
 import com.musio.model.AgentEvent;
 import com.musio.model.ChatConfirmation;
 import com.musio.model.PendingConfirmation;
@@ -225,7 +227,14 @@ public class AgentLoopRunner {
     }
 
     private AgentStepAction normalizeReadAction(AgentLoopState state, AgentStepAction action) {
-        if (action == null || action.action() != AgentStepActionType.TOOL_CALL || !isBatchReadableTool(action.toolName())) {
+        if (action == null || action.action() != AgentStepActionType.TOOL_CALL) {
+            return action;
+        }
+        List<String> playerStateIds = explicitPlayerStateReadTargetSongIds(state);
+        if (!playerStateIds.isEmpty() && isReadableSongTool(action.toolName())) {
+            return withReadSongIds(action, playerStateIds);
+        }
+        if (!isBatchReadableTool(action.toolName())) {
             return action;
         }
         List<String> unreadTargetIds = unreadReadTargetSongIds(state, action.toolName());
@@ -250,6 +259,35 @@ public class AgentLoopRunner {
                 action.confidence(),
                 action.reason()
         );
+    }
+
+    private AgentStepAction withReadSongIds(AgentStepAction action, List<String> songIds) {
+        if (action == null || songIds == null || songIds.isEmpty()) {
+            return action;
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>(action.arguments() == null ? Map.of() : action.arguments());
+        if (isBatchReadableTool(action.toolName()) && songIds.size() > 1) {
+            arguments.put("songIds", songIds);
+            arguments.remove("songId");
+        } else {
+            arguments.put("songId", songIds.getFirst());
+            arguments.remove("songIds");
+        }
+        if ("get_hot_comments".equals(action.toolName()) && !arguments.containsKey("limit")) {
+            arguments.put("limit", 10);
+        }
+        return new AgentStepAction(
+                action.action(),
+                action.toolName(),
+                arguments,
+                action.publicActivity(),
+                action.confidence(),
+                action.reason()
+        );
+    }
+
+    private boolean isReadableSongTool(String toolName) {
+        return "get_hot_comments".equals(toolName) || "get_lyrics".equals(toolName) || "get_song_detail".equals(toolName);
     }
 
     private boolean isBatchReadableTool(String toolName) {
@@ -776,6 +814,10 @@ public class AgentLoopRunner {
         return value == null ? "" : value.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", "");
     }
 
+    private String normalizeText(String value) {
+        return value == null ? "" : value.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", "");
+    }
+
     private boolean containsAny(String value, String... needles) {
         if (value == null || value.isBlank()) {
             return false;
@@ -978,11 +1020,76 @@ public class AgentLoopRunner {
     }
 
     private List<String> readTargetSongIds(AgentLoopState state) {
+        List<String> playerStateIds = explicitPlayerStateReadTargetSongIds(state);
+        if (!playerStateIds.isEmpty()) {
+            return playerStateIds;
+        }
         Set<String> recommendationIds = successfulRecommendationSongIds(state);
         if (!recommendationIds.isEmpty()) {
             return List.copyOf(recommendationIds);
         }
         return observedSongIds(state);
+    }
+
+    private List<String> explicitPlayerStateReadTargetSongIds(AgentLoopState state) {
+        if (state == null || state.memoryContext() == null || state.memoryContext().evidence().isEmpty()) {
+            return List.of();
+        }
+        String request = normalizeText((state.userMessage() == null ? "" : state.userMessage())
+                + " "
+                + (state.goal() == null ? "" : state.goal().effectiveRequest()));
+        if (!mentionsExplicitPlayerState(request)) {
+            return List.of();
+        }
+        for (MemoryEvidence evidence : state.memoryContext().evidence()) {
+            if (evidence == null || evidence.type() != MemoryType.CURRENT_STATE) {
+                continue;
+            }
+            if (mentionsQueuePrevious(request)) {
+                String previousId = extractQueuePreviousSongId(evidence.text());
+                if (!previousId.isBlank()) {
+                    return List.of(previousId);
+                }
+            }
+            if (mentionsCurrentPlayback(request) && !evidence.sourceId().isBlank() && !"player".equals(evidence.sourceId())) {
+                return List.of(evidence.sourceId());
+            }
+        }
+        return List.of();
+    }
+
+    private boolean mentionsExplicitPlayerState(String normalized) {
+        return mentionsCurrentPlayback(normalized) || mentionsQueuePrevious(normalized) || containsAny(normalized, "播放器里", "播放器中", "队列里", "播放队列");
+    }
+
+    private boolean mentionsCurrentPlayback(String normalized) {
+        return containsAny(normalized, "当前播放", "正在播放", "正在放", "正在播", "现在播放", "现在放", "现在播", "播放器里", "播放器中");
+    }
+
+    private boolean mentionsQueuePrevious(String normalized) {
+        return containsAny(normalized, "队列上一首", "播放队列上一首");
+    }
+
+    private String extractQueuePreviousSongId(String text) {
+        String value = text == null ? "" : text;
+        int previousStart = value.indexOf("上一首=");
+        if (previousStart < 0) {
+            return "";
+        }
+        int idStart = value.indexOf(" id=", previousStart);
+        if (idStart < 0) {
+            return "";
+        }
+        idStart += 4;
+        int end = idStart;
+        while (end < value.length()) {
+            char ch = value.charAt(end);
+            if (Character.isWhitespace(ch) || ch == '；' || ch == '，' || ch == ',' || ch == '\n') {
+                break;
+            }
+            end++;
+        }
+        return value.substring(idStart, end).strip();
     }
 
     private Set<String> successfulReadSongIds(AgentLoopState state, String toolName) {

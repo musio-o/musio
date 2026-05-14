@@ -19,6 +19,9 @@ import com.musio.agent.capability.MusioPlaylistCapabilityHandler;
 import com.musio.agent.trace.AgentTracePublisher;
 import com.musio.config.MusioConfig;
 import com.musio.events.AgentEventBus;
+import com.musio.memory.context.MemoryContextPackage;
+import com.musio.memory.context.MemoryEvidence;
+import com.musio.memory.context.MemoryType;
 import com.musio.model.AgentEvent;
 import com.musio.model.AgentTaskMemory;
 import com.musio.model.Comment;
@@ -196,6 +199,55 @@ class AgentLoopRunnerTest {
         assertEquals(2, evidence.observations().size());
         assertEquals(AgentObservationStatus.SKIPPED, evidence.observations().getFirst().status());
         assertEquals("search_songs", evidence.observations().get(1).toolName());
+    }
+
+    @Test
+    void explicitCurrentPlaybackReadOverridesPreviousTaskSong() {
+        AgentLoopRunner runner = new AgentLoopRunner(
+                new SequencedPlanner(List.of(
+                        new AgentStepAction(AgentStepActionType.TOOL_CALL, "get_hot_comments", Map.of("songId", "qqmusic:0", "limit", 1), "读评论", 0.9, "模型仍使用旧任务歌曲"),
+                        AgentStepAction.finalAnswer("结束", 0.9)
+                )),
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+        MemoryContextPackage memoryContext = new MemoryContextPackage(
+                "[动态记忆上下文]\n[当前播放状态]\n- 当前播放: 给你宇宙 - 脸红的思春期 id=qqmusic:current",
+                List.of(new MemoryEvidence(MemoryType.CURRENT_STATE, "qqmusic:current", "当前播放: 给你宇宙 - 脸红的思春期 id=qqmusic:current", 0.9, 0.85, "用户明确引用当前播放", Instant.EPOCH)),
+                40
+        );
+
+        AgentLoopEvidence evidence = runner.run(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "正在播放的这首看评论区怎么说",
+                List.of(),
+                memoryWithTargetSong(),
+                List.of(),
+                0,
+                null,
+                0,
+                new AgentGoal(
+                        "正在播放的这首看评论区怎么说",
+                        "获取《夜曲》的热门评论",
+                        "comments",
+                        "follow_up",
+                        true,
+                        true,
+                        false,
+                        false,
+                        0,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.COMMENTS)
+                ),
+                memoryContext
+        ));
+
+        assertEquals(1, evidence.observations().size());
+        assertEquals("get_hot_comments", evidence.observations().getFirst().toolName());
+        assertEquals("qqmusic:current", evidence.observations().getFirst().arguments().get("songId"));
+        assertTrue(evidence.observations().getFirst().resultJson().contains("\"songId\":\"qqmusic:current\""));
     }
 
     @Test

@@ -70,6 +70,9 @@ public class AgentStepPlanner {
                         当前 Agent Goal：
                         %s
 
+                        动态记忆上下文：
+                        %s
+
                         最近对话：
                         %s
 
@@ -84,6 +87,7 @@ public class AgentStepPlanner {
                         """.formatted(
                         taskMemoryPreview(state == null ? null : state.taskMemory()),
                         goalPreview(state),
+                        memoryContextPreview(state),
                         historyPreview(state == null ? List.of() : state.recentHistory()),
                         observationPreview(state == null ? List.of() : state.observations()),
                         requestedSongCountPreview(state),
@@ -209,6 +213,8 @@ public class AgentStepPlanner {
                 - recommend_songs observation 会提供 requestedTotal、resolvedTotal、slotResults、songs、unresolved；推荐是否完成必须以这些结构化覆盖度为准。
                 - 如果 recommend_songs 已成功返回足够 songs / slotResults 已覆盖所有 slots，且用户没有继续要求评论、歌词、详情或写入，下一步应 final_answer。
                 - 如果用户要歌词、评论或歌曲详情，但当前没有目标 songId，下一步应先搜索或利用已有 observation / 任务记忆里的歌曲 id。
+                - 如果用户明确说“当前播放/正在播放/播放器里/队列里/队列上一首”，并且动态记忆上下文提供了“当前播放状态”，应优先使用动态记忆里的播放器状态 songId；它的优先级高于 Agent Goal 或短期任务记忆中的旧目标歌曲。
+                - “正在播放的这首/当前播放这首/播放器里这首”指 currentPlayback 里的当前歌曲；“队列上一首”指 queueState 里的上一首。
                 - 如果用户要对多首已推荐/已搜索歌曲读取歌词或热门评论，优先用 get_lyrics.songIds 或 get_hot_comments.songIds 一次传入多个 songId，不要逐首拆成多次工具调用。
                 - 如果同一个 songId 的 get_hot_comments / get_lyrics / get_song_detail 已经成功出现在 observations 中，不要再次调用同一个工具；应继续处理还没完成的目标。
                 - 本地歌单确认只拦截 add_song_to_musio_playlist 这类写入动作；如果 Agent Goal 还要求歌词、评论或详情，应先完成这些只读工具，再 request_confirmation。
@@ -249,6 +255,13 @@ public class AgentStepPlanner {
             return "无";
         }
         return state.goal().plannerSummary();
+    }
+
+    String memoryContextPreview(AgentLoopState state) {
+        if (state == null || state.memoryContext() == null || state.memoryContext().promptText().isBlank()) {
+            return "无";
+        }
+        return state.memoryContext().promptText();
     }
 
     private AgentStepActionType parseActionType(String value) {

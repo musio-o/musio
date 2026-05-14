@@ -7,6 +7,7 @@ import {
   MusicGeneSnapshot,
   MusioPlaylist,
   PlayerState,
+  PlayerStateSyncPayload,
   ProviderStatus,
   Song,
   SongComment,
@@ -97,6 +98,11 @@ export const api = {
   lyrics: (songId: string) => request<Lyrics>(`/api/music/songs/${encodeURIComponent(songId)}/lyrics`),
   comments: (songId: string) => request<SongComment[]>(`/api/music/songs/${encodeURIComponent(songId)}/comments`),
   playerState: () => request<PlayerState>("/api/player/state"),
+  syncPlayerState: (state: PlayerStateSyncPayload) =>
+    request<PlayerState>("/api/player/state", {
+      method: "POST",
+      body: JSON.stringify(state)
+    }),
   musioPlaylists: () => request<MusioPlaylist[]>("/api/musio/playlists"),
   addSongToMusioPlaylist: (playlistId: string, song: Song) =>
     request<MusioPlaylist>(`/api/musio/playlists/${encodeURIComponent(playlistId)}/items`, {

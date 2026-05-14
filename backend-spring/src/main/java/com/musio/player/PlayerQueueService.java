@@ -9,6 +9,7 @@ public class PlayerQueueService {
     private PlayerState state = new PlayerState(
             null,
             List.of(),
+            -1,
             true,
             0,
             null,
@@ -20,10 +21,19 @@ public class PlayerQueueService {
         return state;
     }
 
+    public synchronized PlayerState sync(PlayerState nextState) {
+        if (nextState == null) {
+            return state;
+        }
+        state = nextState;
+        return state;
+    }
+
     public synchronized PlayerState pause() {
         state = new PlayerState(
                 state.currentSong(),
                 state.queue(),
+                state.currentIndex(),
                 true,
                 state.positionSeconds(),
                 state.durationSeconds(),
@@ -37,6 +47,7 @@ public class PlayerQueueService {
         state = new PlayerState(
                 state.currentSong(),
                 state.queue(),
+                state.currentIndex(),
                 false,
                 state.positionSeconds(),
                 state.durationSeconds(),

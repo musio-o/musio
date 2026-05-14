@@ -4,6 +4,7 @@ import com.musio.player.PlayerQueueService;
 import com.musio.player.PlayerState;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -19,6 +20,11 @@ public class PlayerController {
     @GetMapping("/state")
     public PlayerState state() {
         return playerQueueService.state();
+    }
+
+    @PostMapping("/state")
+    public PlayerState syncState(@RequestBody PlayerState state) {
+        return playerQueueService.sync(state);
     }
 
     @PostMapping("/pause")

@@ -3,8 +3,15 @@ package com.musio.memory.context;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.musio.agent.AgentLlmLogger;
+import com.musio.agent.ConversationHistoryMessage;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
+import com.musio.model.AgentRecentRecommendedSong;
+import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
+import com.musio.model.AgentToolFailure;
+import com.musio.model.PendingLocalPlaylistAdd;
+import com.musio.model.Song;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -22,6 +29,8 @@ import java.util.Set;
 public class LlmMemoryRoutePlanner {
     private static final Logger log = LoggerFactory.getLogger(LlmMemoryRoutePlanner.class);
     private static final double MIN_CONFIDENCE = 0.55;
+    private static final int HISTORY_PREVIEW_LIMIT = 6;
+    private static final int VALUE_PREVIEW_LIMIT = 220;
 
     private final SpringAiChatModelFactory chatModelFactory;
     private final ObjectMapper objectMapper;
@@ -57,6 +66,12 @@ public class LlmMemoryRoutePlanner {
                         musicTask=%s
                         localWriteIntent=%s
 
+                        短期任务记忆 preview（只含受控关键字段）：
+                        %s
+
+                        最近对话 preview（只含最近 %s 条截断消息）：
+                        %s
+
                         允许读取的 MemoryType 和字段：
                         %s
                         """.formatted(
@@ -67,6 +82,9 @@ public class LlmMemoryRoutePlanner {
                         request.goal() == null ? List.of() : request.goal().requiredOutcomes(),
                         request.goal() != null && request.goal().musicTask(),
                         request.goal() != null && request.goal().localWriteIntent(),
+                        taskMemoryPreview(request.taskMemory()),
+                        HISTORY_PREVIEW_LIMIT,
+                        recentHistoryPreview(request.recentHistory()),
                         allowedFieldsPreview()
                 ))
         ));
@@ -151,6 +169,161 @@ public class LlmMemoryRoutePlanner {
         return builder.toString().strip();
     }
 
+    String taskMemoryPreview(AgentTaskMemory memory) {
+        if (isBlankTaskMemory(memory)) {
+            return "无";
+        }
+        StringBuilder builder = new StringBuilder();
+        appendLine(builder, "currentTask", memory.currentTask());
+        appendLine(builder, "lastEffectiveRequest", memory.lastEffectiveRequest());
+        appendLine(builder, "lastTargetSong", songRef(memory.lastTargetSong()));
+        if (memory.lastResultSongs() != null && !memory.lastResultSongs().isEmpty()) {
+            appendLine(builder, "lastResultSongRefs", String.join("；", memory.lastResultSongs().stream()
+                    .limit(5)
+                    .map(this::songRef)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        if (memory.lastRecommendationSlots() != null && !memory.lastRecommendationSlots().isEmpty()) {
+            appendLine(builder, "lastRecommendationSlots", String.join("；", memory.lastRecommendationSlots().stream()
+                    .limit(6)
+                    .map(this::recommendationSlotSummary)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        if (memory.recentRecommendedSongs() != null && !memory.recentRecommendedSongs().isEmpty()) {
+            appendLine(builder, "recentRecommendedSongs", String.join("；", memory.recentRecommendedSongs().stream()
+                    .limit(12)
+                    .map(this::recentRecommendationSummary)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        if (memory.lastRequiredOutcomes() != null && !memory.lastRequiredOutcomes().isEmpty()) {
+            appendLine(builder, "lastRequiredOutcomes", String.join("、", memory.lastRequiredOutcomes().stream().limit(10).toList()));
+        }
+        if (memory.avoidSongTitles() != null && !memory.avoidSongTitles().isEmpty()) {
+            appendLine(builder, "avoidSongTitles", String.join("、", memory.avoidSongTitles().stream().limit(10).toList()));
+        }
+        if (memory.lastObservationSummaries() != null && !memory.lastObservationSummaries().isEmpty()) {
+            appendLine(builder, "lastObservationSummaries", String.join("；", memory.lastObservationSummaries().stream().limit(5).toList()));
+        }
+        if (memory.lastToolFailures() != null && !memory.lastToolFailures().isEmpty()) {
+            appendLine(builder, "lastToolFailures", String.join("；", memory.lastToolFailures().stream()
+                    .limit(3)
+                    .map(this::failureSummary)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        appendLine(builder, "pendingLocalPlaylistAdd", pendingSummary(memory.pendingLocalPlaylistAdd()));
+        String preview = builder.toString().strip();
+        return preview.isBlank() ? "无" : preview;
+    }
+
+    String recentHistoryPreview(List<ConversationHistoryMessage> history) {
+        if (history == null || history.isEmpty()) {
+            return "无";
+        }
+        int start = Math.max(0, history.size() - HISTORY_PREVIEW_LIMIT);
+        StringBuilder builder = new StringBuilder();
+        for (ConversationHistoryMessage message : history.subList(start, history.size())) {
+            if (message == null) {
+                continue;
+            }
+            builder.append(safe(message.role()).isBlank() ? "unknown" : safe(message.role()))
+                    .append(": ")
+                    .append(truncate(message.content()));
+            String songs = historySongRefs(message);
+            if (!songs.isBlank()) {
+                builder.append(" [songs: ").append(songs).append(']');
+            }
+            builder.append('\n');
+        }
+        String preview = builder.toString().strip();
+        return preview.isBlank() ? "无" : preview;
+    }
+
+    private boolean isBlankTaskMemory(AgentTaskMemory memory) {
+        return memory == null
+                || (safe(memory.currentTask()).isBlank()
+                && safe(memory.lastEffectiveRequest()).isBlank()
+                && memory.lastTargetSong() == null
+                && (memory.lastResultSongs() == null || memory.lastResultSongs().isEmpty())
+                && (memory.lastRecommendationSlots() == null || memory.lastRecommendationSlots().isEmpty())
+                && (memory.recentRecommendedSongs() == null || memory.recentRecommendedSongs().isEmpty())
+                && (memory.lastRequiredOutcomes() == null || memory.lastRequiredOutcomes().isEmpty())
+                && (memory.avoidSongTitles() == null || memory.avoidSongTitles().isEmpty())
+                && (memory.lastObservationSummaries() == null || memory.lastObservationSummaries().isEmpty())
+                && (memory.lastToolFailures() == null || memory.lastToolFailures().isEmpty())
+                && memory.pendingLocalPlaylistAdd() == null);
+    }
+
+    private void appendLine(StringBuilder builder, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            builder.append(key).append(": ").append(truncate(value)).append('\n');
+        }
+    }
+
+    private String songRef(Song song) {
+        if (song == null) {
+            return "";
+        }
+        String artists = song.artists() == null || song.artists().isEmpty() ? "" : " - " + String.join("/", song.artists());
+        String id = safe(song.id()).isBlank() ? "" : " id=" + safe(song.id());
+        return (safe(song.title()) + artists + id).strip();
+    }
+
+    private String recommendationSlotSummary(AgentTaskRecommendationSlot slot) {
+        if (slot == null || safe(slot.slotId()).isBlank()) {
+            return "";
+        }
+        String songs = slot.songTitles().isEmpty() ? "无已命中歌曲" : String.join("/", slot.songTitles());
+        return "%s:%s=%s x%s -> %s".formatted(slot.slotId(), slot.targetType(), slot.target(), slot.requestedCount(), songs);
+    }
+
+    private String recentRecommendationSummary(AgentRecentRecommendedSong recommendation) {
+        if (recommendation == null || safe(recommendation.title()).isBlank()) {
+            return "";
+        }
+        String artists = recommendation.artists().isEmpty() ? "" : " - " + String.join("/", recommendation.artists());
+        return recommendation.title() + artists;
+    }
+
+    private String failureSummary(AgentToolFailure failure) {
+        if (failure == null || safe(failure.toolName()).isBlank()) {
+            return "";
+        }
+        return failure.toolName() + ": " + safe(failure.message());
+    }
+
+    private String pendingSummary(PendingLocalPlaylistAdd pending) {
+        if (pending == null) {
+            return "";
+        }
+        Song singleSong = pending.song();
+        int songCount = pending.songs() == null ? 0 : pending.songs().size();
+        String target = singleSong == null ? "songs=" + songCount : songRef(singleSong);
+        return "playlistId=%s, %s".formatted(safe(pending.playlistId()), target);
+    }
+
+    private String historySongRefs(ConversationHistoryMessage message) {
+        if (message == null || message.songs().isEmpty()) {
+            return "";
+        }
+        return String.join("；", message.songs().stream()
+                .limit(3)
+                .map(this::songRef)
+                .filter(value -> !value.isBlank())
+                .toList());
+    }
+
+    private String truncate(String value) {
+        String stripped = safe(value).replaceAll("\\s+", " ");
+        if (stripped.length() <= VALUE_PREVIEW_LIMIT) {
+            return stripped;
+        }
+        return stripped.substring(0, VALUE_PREVIEW_LIMIT) + "...";
+    }
+
     private String extractJsonObject(String value) {
         int start = value.indexOf('{');
         int end = value.lastIndexOf('}');
@@ -163,6 +336,10 @@ public class LlmMemoryRoutePlanner {
     private String text(JsonNode node, String field) {
         JsonNode value = node.path(field);
         return value.isTextual() ? value.asText().strip() : "";
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value.strip();
     }
 
     private List<String> textArray(JsonNode node) {

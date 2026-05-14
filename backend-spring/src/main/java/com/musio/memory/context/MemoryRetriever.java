@@ -15,6 +15,8 @@ import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.MusicProfileMemory;
 import com.musio.model.PendingLocalPlaylistAdd;
 import com.musio.model.Song;
+import com.musio.player.PlayerQueueService;
+import com.musio.player.PlayerState;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -29,9 +31,20 @@ public class MemoryRetriever {
     private final MusicCacheStore musicCacheStore;
     private final ConversationSummaryStore conversationSummaryStore;
     private final PreferenceStore preferenceStore;
+    private final PlayerQueueService playerQueueService;
 
     public MemoryRetriever(MusicProfileService musicProfileService) {
-        this(musicProfileService, null, null, null, null);
+        this(musicProfileService, null, null, null, null, null);
+    }
+
+    public MemoryRetriever(
+            MusicProfileService musicProfileService,
+            BehaviorSummaryService behaviorSummaryService,
+            MusicCacheStore musicCacheStore,
+            ConversationSummaryStore conversationSummaryStore,
+            PreferenceStore preferenceStore
+    ) {
+        this(musicProfileService, behaviorSummaryService, musicCacheStore, conversationSummaryStore, preferenceStore, null);
     }
 
     @Autowired
@@ -40,13 +53,15 @@ public class MemoryRetriever {
             BehaviorSummaryService behaviorSummaryService,
             MusicCacheStore musicCacheStore,
             ConversationSummaryStore conversationSummaryStore,
-            PreferenceStore preferenceStore
+            PreferenceStore preferenceStore,
+            PlayerQueueService playerQueueService
     ) {
         this.musicProfileService = musicProfileService;
         this.behaviorSummaryService = behaviorSummaryService;
         this.musicCacheStore = musicCacheStore;
         this.conversationSummaryStore = conversationSummaryStore;
         this.preferenceStore = preferenceStore;
+        this.playerQueueService = playerQueueService;
     }
 
     public List<MemoryEvidence> retrieve(MemoryRouteRequest request, MemoryReadPlan plan) {
@@ -65,9 +80,7 @@ public class MemoryRetriever {
                 case BEHAVIOR_SUMMARY -> evidence.addAll(behaviorSummaryEvidence(request, item));
                 case MUSIC_CACHE -> evidence.addAll(musicCacheEvidence(request, item));
                 case CONVERSATION_SUMMARY -> evidence.addAll(conversationSummaryEvidence(request, item));
-                case CURRENT_STATE -> {
-                    // Current playback/queue will be connected when player state is durable.
-                }
+                case CURRENT_STATE -> evidence.addAll(currentStateEvidence(item));
             }
         }
         return evidence.stream()
@@ -75,6 +88,43 @@ public class MemoryRetriever {
                 .sorted((left, right) -> Double.compare(right.score(), left.score()))
                 .limit(20)
                 .toList();
+    }
+
+    private List<MemoryEvidence> currentStateEvidence(MemoryReadItem item) {
+        if (playerQueueService == null) {
+            return List.of();
+        }
+        PlayerState state = playerQueueService.state();
+        if (state == null) {
+            return List.of();
+        }
+        List<String> parts = new ArrayList<>();
+        for (String field : item.fields()) {
+            switch (field) {
+                case "currentPlayback" -> add(parts, "当前播放", currentPlayback(state));
+                case "queueState" -> add(parts, "播放队列", queueState(state, item.limit()));
+                default -> {
+                }
+            }
+        }
+        if (parts.isEmpty()) {
+            return List.of();
+        }
+        return List.of(new MemoryEvidence(
+                MemoryType.CURRENT_STATE,
+                currentPlaybackSourceId(state),
+                String.join("\n", parts),
+                score(item),
+                0.85,
+                item.reason(),
+                Instant.now()
+        ));
+    }
+
+    private String currentPlaybackSourceId(PlayerState state) {
+        return state.currentSong() == null || safe(state.currentSong().id()).isBlank()
+                ? "player"
+                : safe(state.currentSong().id());
     }
 
     private List<MemoryEvidence> behaviorSummaryEvidence(MemoryRouteRequest request, MemoryReadItem item) {
@@ -269,6 +319,61 @@ public class MemoryRetriever {
         String artists = song.artists() == null || song.artists().isEmpty() ? "" : " - " + String.join("/", song.artists());
         String id = song.id() == null || song.id().isBlank() ? "" : " id=" + song.id();
         return safe(song.title()) + artists + id;
+    }
+
+    private String currentPlayback(PlayerState state) {
+        Song currentSong = state.currentSong();
+        if (currentSong == null) {
+            return "无当前播放";
+        }
+        String status = state.paused() ? "已暂停" : "播放中";
+        String duration = state.durationSeconds() == null || state.durationSeconds() <= 0
+                ? ""
+                : "/" + formatDuration(state.durationSeconds());
+        String lyric = safe(state.lyricLine()).isBlank() ? "" : "，歌词行=" + safe(state.lyricLine());
+        return "%s，状态=%s，进度=%s%s，模式=%s%s".formatted(
+                songRef(currentSong),
+                status,
+                formatDuration(state.positionSeconds()),
+                duration,
+                state.playbackMode(),
+                lyric
+        );
+    }
+
+    private String queueState(PlayerState state, int limit) {
+        List<Song> queue = state.queue();
+        if (queue == null || queue.isEmpty()) {
+            return "队列为空";
+        }
+        int currentIndex = state.currentIndex();
+        List<String> parts = new ArrayList<>();
+        parts.add("总数=" + queue.size());
+        parts.add("当前序号=" + (currentIndex >= 0 ? currentIndex + 1 : "未知"));
+        if (currentIndex > 0 && currentIndex - 1 < queue.size()) {
+            parts.add("上一首=" + songRef(queue.get(currentIndex - 1)));
+        }
+        if (currentIndex >= 0 && currentIndex < queue.size()) {
+            parts.add("当前=" + songRef(queue.get(currentIndex)));
+        }
+        if (currentIndex >= 0 && currentIndex + 1 < queue.size()) {
+            parts.add("下一首=" + songRef(queue.get(currentIndex + 1)));
+        }
+        parts.add("队列摘要=" + queuePreview(queue, limit));
+        return String.join("；", parts);
+    }
+
+    private String queuePreview(List<Song> queue, int limit) {
+        return String.join("；", queue.stream()
+                .limit(limit)
+                .map(this::songRef)
+                .filter(value -> !value.isBlank())
+                .toList());
+    }
+
+    private String formatDuration(int seconds) {
+        int safeSeconds = Math.max(0, seconds);
+        return "%d:%02d".formatted(safeSeconds / 60, safeSeconds % 60);
     }
 
     private String recent(List<AgentRecentRecommendedSong> songs, int limit) {
