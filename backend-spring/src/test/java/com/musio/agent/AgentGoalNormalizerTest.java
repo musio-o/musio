@@ -67,6 +67,91 @@ class AgentGoalNormalizerTest {
     }
 
     @Test
+    void profileToolHintDoesNotBecomeCompletionRequirementForCommentsTask() {
+        AgentTurnPlan turnPlan = new AgentTurnPlan(
+                TurnDisposition.USE_TOOLS,
+                "comments",
+                "new_task",
+                "获取正在播放的歌曲的热门评论",
+                AgentTurnMemoryUse.none("新任务"),
+                List.of(new AgentToolCall("get_user_music_profile", Map.of())),
+                List.of(AgentRequiredOutcome.COMMENTS),
+                0.9,
+                ""
+        );
+
+        assertEquals(
+                List.of(AgentRequiredOutcome.COMMENTS),
+                AgentGoalNormalizer.requiredOutcomes(turnPlan, null, "正在播放的这首看评论区怎么说")
+        );
+    }
+
+    @Test
+    void readToolHintsDoNotExpandHardCompletionRequirements() {
+        AgentTurnPlan turnPlan = new AgentTurnPlan(
+                TurnDisposition.USE_TOOLS,
+                "comments",
+                "new_task",
+                "获取正在播放的歌曲的热门评论",
+                AgentTurnMemoryUse.none("新任务"),
+                List.of(
+                        new AgentToolCall("search_songs", Map.of("keyword", "后弦", "limit", 1)),
+                        new AgentToolCall("get_lyrics", Map.of("songId", "qqmusic:1")),
+                        new AgentToolCall("get_song_detail", Map.of("songId", "qqmusic:1")),
+                        new AgentToolCall("get_playlist_songs", Map.of("playlistId", "qqmusic:playlist:1"))
+                ),
+                List.of(AgentRequiredOutcome.COMMENTS),
+                0.9,
+                ""
+        );
+
+        assertEquals(
+                List.of(AgentRequiredOutcome.COMMENTS),
+                AgentGoalNormalizer.requiredOutcomes(turnPlan, null, "正在播放的这首看评论区怎么说")
+        );
+    }
+
+    @Test
+    void plannerDeclaredProfileOutcomeIsStillPreserved() {
+        AgentTurnPlan turnPlan = new AgentTurnPlan(
+                TurnDisposition.USE_TOOLS,
+                "comments",
+                "new_task",
+                "获取评论并结合音乐画像",
+                AgentTurnMemoryUse.none("新任务"),
+                List.of(),
+                List.of(AgentRequiredOutcome.COMMENTS, AgentRequiredOutcome.PROFILE),
+                0.9,
+                ""
+        );
+
+        assertEquals(
+                List.of(AgentRequiredOutcome.COMMENTS, AgentRequiredOutcome.PROFILE),
+                AgentGoalNormalizer.requiredOutcomes(turnPlan, null, "正在播放的这首看评论区怎么说")
+        );
+    }
+
+    @Test
+    void outcomeSourceSummaryShowsHardOutcomeBoundary() {
+        AgentTurnPlan turnPlan = new AgentTurnPlan(
+                TurnDisposition.USE_TOOLS,
+                "comments",
+                "new_task",
+                "获取正在播放的歌曲的热门评论",
+                AgentTurnMemoryUse.none("新任务"),
+                List.of(new AgentToolCall("get_user_music_profile", Map.of())),
+                List.of(),
+                0.9,
+                ""
+        );
+
+        assertEquals(
+                "[COMMENTS=turn_plan.taskType]",
+                AgentGoalNormalizer.requiredOutcomeSourceSummary(turnPlan, null, "正在播放的这首看评论区怎么说")
+        );
+    }
+
+    @Test
     void repairsExplicitCompositeRecommendationLyricsAndLocalWriteIntentFromUserMessage() {
         AgentTurnPlan turnPlan = new AgentTurnPlan(
                 TurnDisposition.USE_TOOLS,

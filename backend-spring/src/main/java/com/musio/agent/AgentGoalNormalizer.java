@@ -3,9 +3,11 @@ package com.musio.agent;
 import com.musio.agent.recommendation.RecommendationSlot;
 import com.musio.agent.recommendation.RecommendationSlots;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 
 final class AgentGoalNormalizer {
@@ -17,21 +19,39 @@ final class AgentGoalNormalizer {
     }
 
     static List<AgentRequiredOutcome> requiredOutcomes(AgentTurnPlan turnPlan, AgentTaskContext taskContext, String userMessage) {
-        LinkedHashSet<AgentRequiredOutcome> outcomes = new LinkedHashSet<>();
+        return orderedOutcomes(new LinkedHashSet<>(requiredOutcomeSources(turnPlan, taskContext, userMessage).keySet()));
+    }
+
+    static String requiredOutcomeSourceSummary(AgentTurnPlan turnPlan, AgentTaskContext taskContext, String userMessage) {
+        Map<AgentRequiredOutcome, String> sources = requiredOutcomeSources(turnPlan, taskContext, userMessage);
+        if (sources.isEmpty()) {
+            return "none";
+        }
+        return orderedOutcomes(new LinkedHashSet<>(sources.keySet())).stream()
+                .map(outcome -> outcome + "=" + sources.getOrDefault(outcome, "unknown"))
+                .toList()
+                .toString();
+    }
+
+    private static LinkedHashMap<AgentRequiredOutcome, String> requiredOutcomeSources(AgentTurnPlan turnPlan, AgentTaskContext taskContext, String userMessage) {
+        LinkedHashMap<AgentRequiredOutcome, String> outcomes = new LinkedHashMap<>();
         if (turnPlan != null && turnPlan.disposition() == TurnDisposition.USE_TOOLS) {
-            outcomeForTaskType(turnPlan.taskType()).ifPresent(outcomes::add);
+            outcomeForTaskType(turnPlan.taskType()).ifPresent(outcome -> addOutcome(outcomes, outcome, "turn_plan.taskType"));
             if (turnPlan.requiredOutcomes() != null) {
-                outcomes.addAll(turnPlan.requiredOutcomes());
+                for (AgentRequiredOutcome outcome : turnPlan.requiredOutcomes()) {
+                    addOutcome(outcomes, outcome, "turn_plan.requiredOutcomes");
+                }
             }
             for (AgentToolCall call : turnPlan.toolCalls() == null ? List.<AgentToolCall>of() : turnPlan.toolCalls()) {
-                outcomeForTool(call == null ? "" : call.toolName()).ifPresent(outcomes::add);
+                String toolName = call == null ? "" : call.toolName();
+                hardOutcomeForToolHint(toolName).ifPresent(outcome -> addOutcome(outcomes, outcome, "turn_plan.toolHint:" + safe(toolName)));
             }
         }
         if (taskContext != null && taskContext.agentTask()) {
-            outcomeForTaskType(taskContext.taskType()).ifPresent(outcomes::add);
+            outcomeForTaskType(taskContext.taskType()).ifPresent(outcome -> addOutcome(outcomes, outcome, "task_context.taskType"));
         }
         addExplicitMessageOutcomes(outcomes, userMessage);
-        return orderedOutcomes(outcomes);
+        return outcomes;
     }
 
     static List<RecommendationSlot> recommendationSlots(AgentTurnPlan turnPlan, AgentTaskContext taskContext, String userMessage) {
@@ -67,14 +87,8 @@ final class AgentGoalNormalizer {
         };
     }
 
-    private static Optional<AgentRequiredOutcome> outcomeForTool(String toolName) {
+    private static Optional<AgentRequiredOutcome> hardOutcomeForToolHint(String toolName) {
         return switch (safe(toolName)) {
-            case "search_songs" -> Optional.of(AgentRequiredOutcome.SEARCH);
-            case "get_hot_comments" -> Optional.of(AgentRequiredOutcome.COMMENTS);
-            case "get_lyrics" -> Optional.of(AgentRequiredOutcome.LYRICS);
-            case "get_song_detail" -> Optional.of(AgentRequiredOutcome.DETAIL);
-            case "get_user_playlists", "get_playlist_songs" -> Optional.of(AgentRequiredOutcome.PLAYLIST);
-            case "get_user_music_profile" -> Optional.of(AgentRequiredOutcome.PROFILE);
             case "add_song_to_musio_playlist" -> Optional.of(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
             default -> Optional.empty();
         };
@@ -101,25 +115,31 @@ final class AgentGoalNormalizer {
                 .toList();
     }
 
-    private static void addExplicitMessageOutcomes(LinkedHashSet<AgentRequiredOutcome> outcomes, String userMessage) {
+    private static void addExplicitMessageOutcomes(LinkedHashMap<AgentRequiredOutcome, String> outcomes, String userMessage) {
         String normalized = normalize(userMessage);
         if (normalized.isBlank()) {
             return;
         }
         if (hasRecommendationIntent(normalized)) {
-            outcomes.add(AgentRequiredOutcome.RECOMMENDATION);
+            addOutcome(outcomes, AgentRequiredOutcome.RECOMMENDATION, "user_message.recommendation_intent");
         }
         if (hasCommentsIntent(normalized)) {
-            outcomes.add(AgentRequiredOutcome.COMMENTS);
+            addOutcome(outcomes, AgentRequiredOutcome.COMMENTS, "user_message.comments_intent");
         }
         if (hasLyricsIntent(normalized)) {
-            outcomes.add(AgentRequiredOutcome.LYRICS);
+            addOutcome(outcomes, AgentRequiredOutcome.LYRICS, "user_message.lyrics_intent");
         }
         if (hasLocalPlaylistWriteIntent(normalized)) {
             if (!hasPlaylistReadIntent(normalized)) {
                 outcomes.remove(AgentRequiredOutcome.PLAYLIST);
             }
-            outcomes.add(AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE);
+            addOutcome(outcomes, AgentRequiredOutcome.LOCAL_PLAYLIST_WRITE, "user_message.local_playlist_write_intent");
+        }
+    }
+
+    private static void addOutcome(LinkedHashMap<AgentRequiredOutcome, String> outcomes, AgentRequiredOutcome outcome, String source) {
+        if (outcome != null) {
+            outcomes.putIfAbsent(outcome, safe(source).isBlank() ? "unknown" : safe(source));
         }
     }
 

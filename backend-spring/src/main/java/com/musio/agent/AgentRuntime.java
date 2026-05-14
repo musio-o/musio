@@ -177,7 +177,7 @@ public class AgentRuntime {
             boolean traceEnabled = true;
             AgentRunContext.setTraceEnabled(traceEnabled);
             logTurnRuntimePlan(runId, ai, turnPlan, traceEnabled);
-            logAgentGoal(runId, ai, goal, executionCapabilityManifest);
+            logAgentGoal(runId, ai, goal, executionCapabilityManifest, turnPlan, taskContext);
             tracePublisher.publishPlanningDone(runId, String.valueOf(turnPlan.disposition()), turnPlan.taskType(), toolNameList(turnPlan.toolCalls()));
             if (isLocalPlaylistCancelIntent(request.message())) {
                 handleLocalPlaylistCancel(runId, ai, userId, request.visibleMessage(), traceEnabled);
@@ -1255,9 +1255,9 @@ public class AgentRuntime {
         );
     }
 
-    private void logAgentGoal(String runId, MusioConfig.Ai ai, AgentGoal goal, AgentCapabilityManifest manifest) {
+    private void logAgentGoal(String runId, MusioConfig.Ai ai, AgentGoal goal, AgentCapabilityManifest manifest, AgentTurnPlan plan, AgentTaskContext taskContext) {
         log.info(
-                "AGENT_GOAL stage=goal_analyzer runId={} userId={} provider={} model={} taskType={} contextMode={} musicTask={} toolEvidenceExpected={} localWriteIntent={} accountWriteIntent={} requestedSongCount={} requiredOutcomes={} manifestTools={}",
+                "AGENT_GOAL stage=goal_analyzer runId={} userId={} provider={} model={} taskType={} contextMode={} musicTask={} toolEvidenceExpected={} localWriteIntent={} accountWriteIntent={} requestedSongCount={} requiredOutcomes={} requiredOutcomeSources={} manifestTools={}",
                 runId,
                 AgentRunContext.userId().orElse("-"),
                 ai == null ? "" : ai.provider(),
@@ -1270,6 +1270,7 @@ public class AgentRuntime {
                 goal != null && goal.accountWriteIntent(),
                 goal == null ? 0 : goal.requestedSongCount(),
                 goal == null || goal.requiredOutcomes().isEmpty() ? "none" : goal.requiredOutcomes(),
+                goal == null ? "none" : AgentGoalNormalizer.requiredOutcomeSourceSummary(plan, taskContext, goal.userMessage()),
                 manifest == null ? "none" : String.join(",", manifest.names())
         );
     }
