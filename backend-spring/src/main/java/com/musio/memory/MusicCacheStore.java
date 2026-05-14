@@ -74,6 +74,33 @@ public class MusicCacheStore {
         return searchLike(userId, types, normalizedQuery, limit);
     }
 
+    public synchronized List<MusicCacheEntry> searchBySongId(String userId, List<String> cacheTypes, String songId, int limit) {
+        String normalizedSongId = songId == null ? "" : songId.strip();
+        if (normalizedSongId.isBlank()) {
+            return List.of();
+        }
+        List<String> types = normalizeTypes(cacheTypes);
+        String sql = """
+                SELECT id, user_id, cache_type, song_id, title, content, evidence, updated_at
+                FROM music_cache_entries
+                WHERE user_id = ? AND song_id = ? %s
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """.formatted(typeFilter("", types));
+        try (Connection connection = database.openConnection();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, safeUserId(userId));
+            statement.setString(2, normalizedSongId);
+            int index = bindTypes(statement, 3, types);
+            statement.setInt(index, Math.max(1, Math.min(20, limit)));
+            try (ResultSet resultSet = statement.executeQuery()) {
+                return readEntries(resultSet);
+            }
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to search music cache by song id.", e);
+        }
+    }
+
     private void initialize() {
         try (Connection connection = database.openConnection();
              Statement statement = connection.createStatement()) {
@@ -211,7 +238,11 @@ public class MusicCacheStore {
         LinkedHashSet<String> types = new LinkedHashSet<>();
         for (String value : values) {
             if (value != null && !value.isBlank()) {
-                types.add(value.strip());
+                String type = value.strip();
+                types.add(type);
+                if ("commentSummary".equals(type)) {
+                    types.add("comments");
+                }
             }
         }
         return List.copyOf(types);

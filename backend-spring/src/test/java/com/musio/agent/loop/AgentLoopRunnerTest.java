@@ -251,6 +251,60 @@ class AgentLoopRunnerTest {
     }
 
     @Test
+    void completesCommentsFromMusicCacheWithoutPlannerOrToolCall() {
+        TrackingPlanner planner = new TrackingPlanner(List.of(AgentStepAction.finalAnswer("不应调用 planner", 0.9)));
+        AgentLoopRunner runner = new AgentLoopRunner(
+                planner,
+                toolExecutor(),
+                new AgentObservationBuilder(new ObjectMapper()),
+                new ObjectMapper()
+        );
+        Song target = song();
+        MemoryContextPackage memoryContext = new MemoryContextPackage(
+                "[动态记忆上下文]\n[音乐内容缓存]\n- 评论缓存：晴天\n  评论摘录：大家都在聊青春和校园回忆。",
+                List.of(new MemoryEvidence(MemoryType.MUSIC_CACHE, target.id(), "评论缓存：晴天\n评论摘录：大家都在聊青春和校园回忆。", 0.9, 0.75, "命中评论缓存", Instant.EPOCH)),
+                60
+        );
+
+        AgentLoopOutcome outcome = runner.runOutcome(null, new AgentLoopState(
+                "run-1",
+                "local",
+                "这首歌的评论区都在聊啥",
+                List.of(),
+                memoryWithTargetSong(),
+                List.of(),
+                0,
+                null,
+                0,
+                new AgentGoal(
+                        "这首歌的评论区都在聊啥",
+                        "查看《晴天》的热门评论",
+                        "comments",
+                        "refer_previous_song",
+                        true,
+                        true,
+                        false,
+                        false,
+                        0,
+                        List.of(),
+                        List.of(AgentRequiredOutcome.COMMENTS)
+                ),
+                memoryContext
+        ));
+
+        assertEquals(AgentLoopOutcomeType.COMPLETED, outcome.type());
+        assertEquals("memory_cache_completion", outcome.reason());
+        assertEquals(0, planner.calls());
+        assertEquals(1, outcome.evidence().observations().size());
+        assertEquals("comments", outcome.evidence().completedTaskType());
+        AgentObservation observation = outcome.evidence().observations().getFirst();
+        assertEquals("get_hot_comments", observation.toolName());
+        assertEquals(target.id(), observation.arguments().get("songId"));
+        assertTrue(observation.resultJson().contains("\"source\":\"memory_cache\""));
+        assertTrue(observation.resultJson().contains("校园回忆"));
+    }
+
+    @Test
     void normalizesSingleSongReadIntoBatchReadForRecommendedSongs() {
         BatchReadCapabilityHandler handler = new BatchReadCapabilityHandler();
         AgentCapabilityRegistry registry = new AgentCapabilityRegistry(List.of(handler));

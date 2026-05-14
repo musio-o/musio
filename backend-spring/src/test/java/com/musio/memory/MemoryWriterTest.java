@@ -60,13 +60,19 @@ class MemoryWriterTest {
         assertTrue(plan.behaviorEvents().stream().anyMatch(event -> "comments_read".equals(event.type())));
         assertTrue(plan.preferenceCandidates().stream().anyMatch(candidate -> "too_noisy".equals(candidate.name())
                 && candidate.confidenceDelta() <= 0.15));
-        assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "comments".equals(entry.cacheType())));
+        assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "comments".equals(entry.cacheType())
+                && entry.content().contains("\"summary\"")));
+        assertTrue(plan.musicCacheEntries().stream().anyMatch(entry -> "commentSummary".equals(entry.cacheType())
+                && entry.content().equals("评论都说这首歌很治愈，适合慢下来。")));
         assertFalse(plan.conversationSummaries().isEmpty());
 
         assertTrue(stores.behaviorEventStore().recent("local", now.minusSeconds(1), 20).stream()
                 .anyMatch(event -> "comments_read".equals(event.type())));
         assertTrue(stores.musicCacheStore().search("local", List.of("comments"), "治愈", 5).stream()
                 .anyMatch(entry -> entry.content().contains("治愈")));
+        assertTrue(stores.musicCacheStore().search("local", List.of("commentSummary"), "治愈", 5).stream()
+                .anyMatch(entry -> "commentSummary".equals(entry.cacheType())
+                        && entry.content().contains("治愈")));
         assertTrue(stores.conversationSummaryStore().search("local", "别太吵", 5).stream()
                 .anyMatch(summary -> summary.summary().contains("别太吵")));
 

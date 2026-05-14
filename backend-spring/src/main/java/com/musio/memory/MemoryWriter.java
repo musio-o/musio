@@ -201,22 +201,63 @@ public class MemoryWriter {
             if (observation.status() != AgentObservationStatus.SUCCESS) {
                 continue;
             }
-            String cacheType = cacheType(observation.toolName());
-            if (cacheType.isBlank() || observation.resultJson().isBlank()) {
-                continue;
-            }
+            entries.addAll(cacheEntriesForObservation(request, observation));
+        }
+        return entries;
+    }
+
+    private List<MusicCacheEntry> cacheEntriesForObservation(MemoryWriteRequest request, AgentObservation observation) {
+        if (observation == null || observation.resultJson().isBlank()) {
+            return List.of();
+        }
+        if ("get_hot_comments".equals(observation.toolName())) {
+            return commentCacheEntries(request, observation);
+        }
+        String cacheType = cacheType(observation.toolName());
+        if (cacheType.isBlank()) {
+            return List.of();
+        }
+        return List.of(new MusicCacheEntry(
+                "",
+                request.userId(),
+                cacheType,
+                songIdFromArguments(observation.arguments()),
+                titleFromObservation(observation),
+                limit(resultSummary(observation.resultJson()) + "\n" + observation.resultJson(), MAX_CACHE_CONTENT_CHARS),
+                observation.plannerSummary(),
+                request.occurredAt()
+        ));
+    }
+
+    private List<MusicCacheEntry> commentCacheEntries(MemoryWriteRequest request, AgentObservation observation) {
+        List<MusicCacheEntry> entries = new ArrayList<>();
+        String rawContent = limit(observation.resultJson(), MAX_CACHE_CONTENT_CHARS);
+        String summaryContent = limit(commentSummary(observation.resultJson()), MAX_SUMMARY_CHARS);
+        if (!rawContent.isBlank()) {
             entries.add(new MusicCacheEntry(
                     "",
                     request.userId(),
-                    cacheType,
+                    "comments",
                     songIdFromArguments(observation.arguments()),
                     titleFromObservation(observation),
-                    limit(resultSummary(observation.resultJson()) + "\n" + observation.resultJson(), MAX_CACHE_CONTENT_CHARS),
+                    rawContent,
                     observation.plannerSummary(),
                     request.occurredAt()
             ));
         }
-        return entries;
+        if (!summaryContent.isBlank()) {
+            entries.add(new MusicCacheEntry(
+                    "",
+                    request.userId(),
+                    "commentSummary",
+                    songIdFromArguments(observation.arguments()),
+                    titleFromObservation(observation),
+                    summaryContent,
+                    observation.plannerSummary(),
+                    request.occurredAt()
+            ));
+        }
+        return List.copyOf(entries);
     }
 
     private List<ConversationSummary> conversationSummaries(MemoryWriteRequest request) {
@@ -265,7 +306,6 @@ public class MemoryWriter {
 
     private String cacheType(String toolName) {
         return switch (toolName == null ? "" : toolName) {
-            case "get_hot_comments" -> "comments";
             case "get_lyrics" -> "lyricsSummary";
             case "get_song_detail" -> "songDetail";
             default -> "";
@@ -289,6 +329,48 @@ public class MemoryWriter {
         } catch (Exception ignored) {
         }
         return limit(resultJson, 500);
+    }
+
+    private String commentSummary(String resultJson) {
+        if (resultJson == null || resultJson.isBlank()) {
+            return "";
+        }
+        try {
+            JsonNode root = objectMapper.readTree(resultJson);
+            String summary = root.path("summary").asText("");
+            if (!summary.isBlank()) {
+                return summary.strip();
+            }
+            String message = root.path("message").asText("");
+            if (!message.isBlank()) {
+                return message.strip();
+            }
+            List<String> comments = new ArrayList<>();
+            collectCommentTexts(root.path("comments"), comments);
+            JsonNode commentResults = root.path("commentResults");
+            if (commentResults.isArray()) {
+                for (JsonNode item : commentResults) {
+                    collectCommentTexts(item.path("comments"), comments);
+                }
+            }
+            if (!comments.isEmpty()) {
+                return "评论摘录：" + String.join("；", comments.stream().limit(5).toList());
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    private void collectCommentTexts(JsonNode commentsNode, List<String> target) {
+        if (commentsNode == null || !commentsNode.isArray() || target == null) {
+            return;
+        }
+        for (JsonNode comment : commentsNode) {
+            String text = comment.path("text").asText("");
+            if (!text.isBlank()) {
+                target.add(text.strip());
+            }
+        }
     }
 
     private String titleFromObservation(AgentObservation observation) {

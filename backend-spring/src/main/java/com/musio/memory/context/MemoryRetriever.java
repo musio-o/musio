@@ -155,10 +155,13 @@ public class MemoryRetriever {
         }
         String query = item.query().isBlank() ? request.effectiveRequest() : item.query();
         List<MusicCacheEntry> entries = musicCacheStore.search(request.userId(), item.fields(), query, item.limit());
+        if (entries.isEmpty()) {
+            entries = musicCacheStore.searchBySongId(request.userId(), item.fields(), musicCacheTargetSongId(request), item.limit());
+        }
         return entries.stream()
                 .map(entry -> new MemoryEvidence(
                         MemoryType.MUSIC_CACHE,
-                        entry.id(),
+                        entry.songId().isBlank() ? entry.id() : entry.songId(),
                         "%s%s%s".formatted(
                                 cacheTypeLabel(entry.cacheType()),
                                 entry.title().isBlank() ? "" : "：" + entry.title(),
@@ -170,6 +173,24 @@ public class MemoryRetriever {
                         entry.updatedAt()
                 ))
                 .toList();
+    }
+
+    private String musicCacheTargetSongId(MemoryRouteRequest request) {
+        if (request == null || request.taskMemory() == null) {
+            return "";
+        }
+        Song lastTarget = request.taskMemory().lastTargetSong();
+        if (!songId(lastTarget).isBlank()) {
+            return songId(lastTarget);
+        }
+        if (request.taskMemory().lastResultSongs() == null || request.taskMemory().lastResultSongs().isEmpty()) {
+            return "";
+        }
+        return songId(request.taskMemory().lastResultSongs().getFirst());
+    }
+
+    private String songId(Song song) {
+        return song == null || song.id() == null ? "" : song.id().strip();
     }
 
     private List<MemoryEvidence> conversationSummaryEvidence(MemoryRouteRequest request, MemoryReadItem item) {

@@ -124,7 +124,10 @@ public class AgentLoopRunner {
     }
 
     public AgentLoopOutcome runOutcome(MusioConfig.Ai ai, AgentLoopState initialState, List<AgentStepAction> initialActions) {
-        AgentLoopState state = initialState;
+        AgentLoopState state = withMemoryCacheObservations(initialState);
+        if (requiredOutcomesSatisfied(state)) {
+            return outcome(AgentLoopOutcomeType.COMPLETED, state, "memory_cache_completion");
+        }
         Set<String> executedCalls = new LinkedHashSet<>();
         int step = 0;
         for (AgentStepAction action : safeInitialActions(initialActions)) {
@@ -196,6 +199,213 @@ public class AgentLoopRunner {
 
     private AgentStepAction safeAction(AgentStepAction action) {
         return action == null ? AgentStepAction.finalAnswer("step_planner_returned_null", 0.0) : action;
+    }
+
+    private AgentLoopState withMemoryCacheObservations(AgentLoopState state) {
+        if (!needsCommentCacheObservation(state)) {
+            return state;
+        }
+        List<AgentObservation> observations = commentCacheObservations(state);
+        if (!observations.isEmpty()) {
+            log.info(
+                    "AGENT_LOOP_MEMORY_CACHE_HIT runId={} userId={} outcome=COMMENTS songIds={}",
+                    state.runId(),
+                    state.userId(),
+                    observations.stream()
+                            .map(observation -> observation.arguments().get("songId"))
+                            .toList()
+            );
+        }
+        AgentLoopState next = state;
+        for (AgentObservation observation : observations) {
+            next = next.withObservation(observation);
+        }
+        return next;
+    }
+
+    private boolean needsCommentCacheObservation(AgentLoopState state) {
+        if (state == null || state.goal() == null || state.memoryContext() == null || state.memoryContext().evidence().isEmpty()) {
+            return false;
+        }
+        return state.goal().requiredOutcomes().contains(AgentRequiredOutcome.COMMENTS)
+                || "comments".equals(state.goal().taskType());
+    }
+
+    private List<AgentObservation> commentCacheObservations(AgentLoopState state) {
+        List<String> targetIds = readTargetSongIds(state);
+        Set<String> readIds = successfulReadSongIds(state, "get_hot_comments");
+        List<AgentObservation> observations = new ArrayList<>();
+        for (MemoryEvidence evidence : state.memoryContext().evidence()) {
+            if (!isCommentCacheEvidence(evidence)) {
+                continue;
+            }
+            String summary = commentCacheSummary(evidence.text());
+            if (summary.isBlank()) {
+                continue;
+            }
+            String songId = cacheEvidenceSongId(evidence);
+            if (songId.isBlank() && targetIds.size() == 1) {
+                songId = targetIds.getFirst();
+            }
+            if (songId.isBlank()) {
+                continue;
+            }
+            if (!targetIds.isEmpty() && !targetIds.contains(songId)) {
+                continue;
+            }
+            if (readIds.contains(songId)) {
+                continue;
+            }
+            observations.add(commentCacheObservation(songId, summary, evidence, observations.size()));
+            readIds.add(songId);
+        }
+        return List.copyOf(observations);
+    }
+
+    private boolean isCommentCacheEvidence(MemoryEvidence evidence) {
+        return evidence != null
+                && evidence.type() == MemoryType.MUSIC_CACHE
+                && evidence.text() != null
+                && evidence.text().contains("评论缓存");
+    }
+
+    private AgentObservation commentCacheObservation(String songId, String summary, MemoryEvidence evidence, int index) {
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("songId", songId);
+        arguments.put("limit", 10);
+        return new AgentObservation(
+                "memory.cache.comments." + (index + 1),
+                "get_hot_comments",
+                arguments,
+                AgentObservationStatus.SUCCESS,
+                commentCacheResultJson(songId, summary, evidence),
+                "get_hot_comments 命中评论缓存 songId=" + songId,
+                List.of()
+        );
+    }
+
+    private String commentCacheResultJson(String songId, String summary, MemoryEvidence evidence) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("source", "memory_cache");
+        result.put("songId", songId);
+        result.put("summary", summary);
+        result.put("cachedAt", evidence.updatedAt().toString());
+        if (!evidence.evidence().isBlank()) {
+            result.put("evidence", evidence.evidence());
+        }
+        try {
+            return objectMapper.writeValueAsString(result);
+        } catch (Exception ignored) {
+            return "{\"success\":true,\"source\":\"memory_cache\",\"songId\":\""
+                    + escapeJson(songId)
+                    + "\",\"summary\":\""
+                    + escapeJson(summary)
+                    + "\"}";
+        }
+    }
+
+    private String commentCacheSummary(String text) {
+        String body = text == null ? "" : text.strip();
+        int newline = body.indexOf('\n');
+        if (newline >= 0 && body.substring(0, newline).contains("评论缓存")) {
+            body = body.substring(newline + 1).strip();
+        }
+        if (body.startsWith("{")) {
+            return commentSummaryFromJson(body);
+        }
+        return body;
+    }
+
+    private String commentSummaryFromJson(String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            String summary = root.path("summary").asText("");
+            if (!summary.isBlank()) {
+                return summary.strip();
+            }
+            String message = root.path("message").asText("");
+            if (!message.isBlank()) {
+                return message.strip();
+            }
+            List<String> comments = new ArrayList<>();
+            collectCommentTexts(root.path("comments"), comments);
+            JsonNode commentResults = root.path("commentResults");
+            if (commentResults.isArray()) {
+                for (JsonNode item : commentResults) {
+                    collectCommentTexts(item.path("comments"), comments);
+                }
+            }
+            if (!comments.isEmpty()) {
+                return "评论摘录：" + String.join("；", comments.stream().limit(5).toList());
+            }
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    private void collectCommentTexts(JsonNode commentsNode, List<String> target) {
+        if (commentsNode == null || !commentsNode.isArray() || target == null) {
+            return;
+        }
+        for (JsonNode comment : commentsNode) {
+            String text = comment.path("text").asText("");
+            if (!text.isBlank()) {
+                target.add(text.strip());
+            }
+        }
+    }
+
+    private String cacheEvidenceSongId(MemoryEvidence evidence) {
+        if (evidence == null) {
+            return "";
+        }
+        String sourceId = evidence.sourceId() == null ? "" : evidence.sourceId().strip();
+        if (sourceId.contains(":")) {
+            return sourceId;
+        }
+        String text = evidence.text() == null ? "" : evidence.text();
+        String jsonSongId = extractJsonString(text, "\"songId\"");
+        if (!jsonSongId.isBlank()) {
+            return jsonSongId;
+        }
+        int idStart = text.indexOf("id=");
+        if (idStart < 0) {
+            return "";
+        }
+        idStart += 3;
+        int end = idStart;
+        while (end < text.length()) {
+            char ch = text.charAt(end);
+            if (Character.isWhitespace(ch) || ch == '；' || ch == '，' || ch == ',' || ch == '\n') {
+                break;
+            }
+            end++;
+        }
+        return text.substring(idStart, end).strip();
+    }
+
+    private String extractJsonString(String text, String key) {
+        if (text == null || key == null || key.isBlank()) {
+            return "";
+        }
+        int keyIndex = text.indexOf(key);
+        if (keyIndex < 0) {
+            return "";
+        }
+        int colon = text.indexOf(':', keyIndex + key.length());
+        if (colon < 0) {
+            return "";
+        }
+        int quoteStart = text.indexOf('"', colon + 1);
+        if (quoteStart < 0) {
+            return "";
+        }
+        int quoteEnd = text.indexOf('"', quoteStart + 1);
+        if (quoteEnd <= quoteStart) {
+            return "";
+        }
+        return text.substring(quoteStart + 1, quoteEnd).strip();
     }
 
     private AgentStepAction recoveryActionForMissingReadOutcome(AgentLoopState state) {
