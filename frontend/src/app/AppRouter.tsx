@@ -237,6 +237,7 @@ export function AppRouter() {
           />
         ) : (
           <section className="workbench-stage">
+            <WorkbenchBackdrop />
             <MagneticDotField />
             <TimeBackdrop now={now} />
             <section
@@ -327,6 +328,21 @@ export function AppRouter() {
 }
 
 type WorkbenchDrawer = "search" | "queue" | "lyrics" | "comments" | "trace";
+
+function WorkbenchBackdrop() {
+  return (
+    <div className="workbench-backdrop" aria-hidden="true">
+      <span className="cosmic-halo" />
+      <span className="cosmic-beam cosmic-beam-left" />
+      <span className="cosmic-beam cosmic-beam-right" />
+      <span className="cosmic-arc cosmic-arc-left" />
+      <span className="cosmic-arc cosmic-arc-right" />
+      <span className="cosmic-star-field cosmic-star-field-left" />
+      <span className="cosmic-star-field cosmic-star-field-right" />
+      <span className="cosmic-vignette" />
+    </div>
+  );
+}
 
 type MagneticDotTone = "neutral" | "accent" | "cold";
 
