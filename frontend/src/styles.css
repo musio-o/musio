@@ -7192,15 +7192,15 @@ canvas.magnetic-dot-field::before {
 }
 
 .workspace-workbench .radio-workbench .radio-rhythm-glow {
-  inset: -38px;
+  inset: -54px;
   z-index: 0;
-  border-radius: 32px;
+  border-radius: 40px;
   background:
     radial-gradient(ellipse 78% 40% at 50% 0%, rgba(var(--rhythm-cyan), 0.16), transparent 74%),
     radial-gradient(ellipse 68% 34% at 50% 100%, rgba(var(--rhythm-violet), 0.14), transparent 80%),
     radial-gradient(ellipse 44% 68% at 0% 50%, rgba(var(--rhythm-amber), 0.1), transparent 78%),
     radial-gradient(ellipse 44% 68% at 100% 50%, rgba(var(--rhythm-cyan), 0.1), transparent 78%);
-  filter: blur(28px);
+  filter: blur(34px);
 }
 
 .workspace-workbench .radio-workbench .radio-rhythm-edge {
@@ -7277,7 +7277,7 @@ canvas.magnetic-dot-field::before {
 
 .workspace-workbench .radio-workbench.is-playing .radio-rhythm-wave {
   opacity: calc(0.34 + var(--chat-pulse-level) * 0.18);
-  animation: radio-rhythm-wave 1500ms cubic-bezier(0.42, 0, 0.22, 1) infinite;
+  animation: radio-rhythm-wave 1350ms cubic-bezier(0.42, 0, 0.22, 1) infinite;
 }
 
 .workspace-workbench .radio-workbench > :not(.radio-rhythm-glow):not(.radio-rhythm-edge):not(.radio-rhythm-wave) {
@@ -7302,13 +7302,13 @@ canvas.magnetic-dot-field::before {
 
 @keyframes radio-rhythm-glow {
   0%, 100% {
-    filter: blur(28px);
+    filter: blur(34px);
     transform: scale(1);
     opacity: calc(0.24 + var(--chat-pulse-level) * 0.14);
   }
   50% {
-    filter: blur(36px);
-    transform: scale(1.028);
+    filter: blur(48px);
+    transform: scale(1.07);
     opacity: calc(0.42 + var(--chat-pulse-level) * 0.16);
   }
 }
@@ -7334,10 +7334,10 @@ canvas.magnetic-dot-field::before {
   }
   50% {
     background-position:
-      34px 0,
-      -18px 100%,
-      0 34px,
-      100% -16px;
+      58px 0,
+      -36px 100%,
+      0 58px,
+      100% -34px;
   }
 }
 
@@ -7722,11 +7722,14 @@ canvas.magnetic-dot-field::before {
     radial-gradient(ellipse 34% 88% at 47% 48%, rgba(56, 148, 176, 0.18), transparent 72%),
     linear-gradient(90deg, transparent 0 38%, rgba(155, 231, 240, 0.08) 49%, rgba(155, 231, 240, 0.1) 51%, transparent 62%);
   filter: blur(1px);
+  transform-origin: 50% 50%;
+  animation: cosmic-halo-drift 16s ease-in-out infinite;
 }
 
 .workspace-workbench .cosmic-beam {
   opacity: 0.82;
   mix-blend-mode: screen;
+  will-change: transform, opacity, filter;
 }
 
 .workspace-workbench .cosmic-beam-left {
@@ -7735,6 +7738,8 @@ canvas.magnetic-dot-field::before {
     linear-gradient(96deg, transparent 0 12%, rgba(77, 187, 222, 0.1) 42%, rgba(154, 240, 246, 0.4) 73%, transparent 100%),
     linear-gradient(100deg, transparent 0 24%, rgba(89, 211, 236, 0.14) 52%, rgba(255, 255, 255, 0.3) 82%, transparent 100%);
   filter: blur(0.4px) drop-shadow(0 0 16px rgba(88, 205, 230, 0.2));
+  transform-origin: 44% 53%;
+  animation: cosmic-beam-left-float 17s ease-in-out infinite;
 }
 
 .workspace-workbench .cosmic-beam-right {
@@ -7743,12 +7748,15 @@ canvas.magnetic-dot-field::before {
     linear-gradient(116deg, transparent 0 36%, rgba(134, 238, 244, 0.42) 54%, rgba(58, 176, 211, 0.16) 72%, transparent 100%),
     linear-gradient(132deg, transparent 0 45%, rgba(255, 255, 255, 0.28) 55%, transparent 68%);
   filter: blur(0.5px) drop-shadow(0 0 22px rgba(112, 231, 242, 0.22));
+  transform-origin: 58% 52%;
+  animation: cosmic-beam-right-float 15s ease-in-out -4s infinite;
 }
 
 .workspace-workbench .cosmic-arc {
   opacity: 0.78;
   mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
   -webkit-mask-image: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+  will-change: transform, opacity;
 }
 
 .workspace-workbench .cosmic-arc-left {
@@ -7756,6 +7764,7 @@ canvas.magnetic-dot-field::before {
     radial-gradient(ellipse 68% 56% at 12% 31%, transparent 57%, rgba(126, 219, 239, 0.34) 57.25%, transparent 57.9%),
     radial-gradient(ellipse 78% 64% at 12% 83%, transparent 53%, rgba(58, 172, 211, 0.28) 53.22%, transparent 53.85%),
     radial-gradient(ellipse 58% 44% at 22% 76%, transparent 61%, rgba(69, 156, 184, 0.18) 61.18%, transparent 61.78%);
+  animation: cosmic-arc-left-drift 24s ease-in-out -6s infinite;
 }
 
 .workspace-workbench .cosmic-arc-right {
@@ -7764,6 +7773,7 @@ canvas.magnetic-dot-field::before {
     radial-gradient(ellipse 58% 62% at 84% 68%, transparent 52%, rgba(90, 219, 239, 0.36) 52.16%, transparent 53.1%),
     radial-gradient(ellipse 42% 50% at 80% 63%, transparent 48%, rgba(202, 255, 255, 0.42) 48.2%, transparent 49%);
   filter: drop-shadow(0 0 20px rgba(113, 225, 239, 0.16));
+  animation: cosmic-arc-right-drift 22s ease-in-out -2s infinite;
 }
 
 .workspace-workbench .cosmic-star-field {
@@ -7772,6 +7782,7 @@ canvas.magnetic-dot-field::before {
     radial-gradient(circle, rgba(226, 247, 248, 0.95) 0 1px, transparent 1.25px) 0 0 / 96px 96px,
     radial-gradient(circle, rgba(133, 228, 242, 0.48) 0 0.8px, transparent 1.08px) 28px 20px / 58px 58px,
     radial-gradient(circle, rgba(226, 247, 248, 0.32) 0 0.72px, transparent 1px) 12px 4px / 28px 28px;
+  animation: cosmic-star-field-drift 36s linear infinite;
 }
 
 .workspace-workbench .cosmic-star-field-left {
@@ -7892,5 +7903,97 @@ canvas.magnetic-dot-field::before {
 
   .workspace-workbench .cosmic-star-field {
     opacity: 0.34;
+  }
+}
+
+@keyframes cosmic-halo-drift {
+  0%, 100% {
+    opacity: 0.86;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  48% {
+    opacity: 1;
+    transform: translate3d(0, -10px, 0) scale(1.045);
+  }
+}
+
+@keyframes cosmic-beam-left-float {
+  0%, 100% {
+    opacity: 0.72;
+    filter: blur(0.4px) drop-shadow(0 0 14px rgba(88, 205, 230, 0.18));
+    transform: translate3d(0, 0, 0) scaleX(1) scaleY(1);
+  }
+  45% {
+    opacity: 0.94;
+    filter: blur(0.55px) drop-shadow(0 0 25px rgba(88, 205, 230, 0.3));
+    transform: translate3d(22px, -14px, 0) scaleX(1.06) scaleY(1.04);
+  }
+  72% {
+    opacity: 0.84;
+    transform: translate3d(9px, 11px, 0) scaleX(1.028) scaleY(1.022);
+  }
+}
+
+@keyframes cosmic-beam-right-float {
+  0%, 100% {
+    opacity: 0.74;
+    filter: blur(0.5px) drop-shadow(0 0 18px rgba(112, 231, 242, 0.2));
+    transform: translate3d(0, 0, 0) scaleX(1) scaleY(1);
+  }
+  40% {
+    opacity: 0.96;
+    filter: blur(0.65px) drop-shadow(0 0 32px rgba(112, 231, 242, 0.34));
+    transform: translate3d(-24px, 16px, 0) scaleX(1.065) scaleY(1.04);
+  }
+  76% {
+    opacity: 0.86;
+    transform: translate3d(-12px, -11px, 0) scaleX(1.032) scaleY(1.024);
+  }
+}
+
+@keyframes cosmic-arc-left-drift {
+  0%, 100% {
+    opacity: 0.58;
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    opacity: 0.82;
+    transform: translate3d(24px, -18px, 0);
+  }
+}
+
+@keyframes cosmic-arc-right-drift {
+  0%, 100% {
+    opacity: 0.56;
+    transform: translate3d(0, 0, 0);
+  }
+  52% {
+    opacity: 0.8;
+    transform: translate3d(-22px, 20px, 0);
+  }
+}
+
+@keyframes cosmic-star-field-drift {
+  0% {
+    background-position:
+      0 0,
+      28px 20px,
+      12px 4px;
+  }
+  100% {
+    background-position:
+      42px -30px,
+      -16px 48px,
+      48px -26px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-workbench .cosmic-halo,
+  .workspace-workbench .cosmic-beam,
+  .workspace-workbench .cosmic-arc,
+  .workspace-workbench .cosmic-star-field {
+    animation: none;
+    transform: none;
   }
 }
