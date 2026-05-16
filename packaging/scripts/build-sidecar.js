@@ -85,38 +85,90 @@ function venvPython() {
 }
 
 function findPythonCommand() {
-  const candidates = [];
-  if (process.env.MUSIO_PYTHON_EXE) {
-    candidates.push([process.env.MUSIO_PYTHON_EXE]);
-  }
-  if (process.platform === "win32") {
-    candidates.push(["py", "-3.11"], ["python"], ["python3"]);
-  } else {
-    candidates.push(["python3"], ["python"]);
+  const candidates = pythonCandidates();
+  const attempts = [];
+
+  if (candidates.length === 0) {
+    fail("Python 3.11+ is required to build the QQMusic sidecar binary.");
   }
 
+  const versionCheck = [
+    "-c",
+    "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+  ];
+
   for (const candidate of candidates) {
-    const result = spawnSync(candidate[0], [
-      ...candidate.slice(1),
-      "-c",
-      "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-    ], {
-      stdio: "ignore",
-      shell: process.platform === "win32"
+    const result = spawnSync(candidate[0], [...candidate.slice(1), ...versionCheck], {
+      stdio: "ignore"
     });
     if (result.status === 0) {
       return candidate;
     }
+    attempts.push(describePythonAttempt(candidate, result));
   }
 
-  fail("Python 3.11+ is required to build the QQMusic sidecar binary.");
+  fail(
+    "Python 3.11+ is required to build the QQMusic sidecar binary.",
+    attempts.length ? "Tried: " + attempts.join("; ") : null
+  );
+}
+
+function pythonCandidates() {
+  const candidates = [];
+  const seen = new Set();
+  const add = (candidate) => {
+    if (!candidate || !candidate[0]) {
+      return;
+    }
+    const key = candidate.join("\0");
+    if (!seen.has(key)) {
+      seen.add(key);
+      candidates.push(candidate);
+    }
+  };
+
+  add([process.env.MUSIO_PYTHON_EXE]);
+  add(setupPythonExecutable());
+
+  if (process.platform === "win32") {
+    add(["py", "-3.12"]);
+    add(["py", "-3.11"]);
+    add(["py", "-3"]);
+    add(["python"]);
+    add(["python3"]);
+  } else {
+    add(["python3"]);
+    add(["python"]);
+  }
+
+  return candidates;
+}
+
+function setupPythonExecutable() {
+  const pythonRoot = process.env.pythonLocation
+    || process.env.Python3_ROOT_DIR
+    || process.env.Python_ROOT_DIR;
+  if (!pythonRoot) {
+    return null;
+  }
+  const executable = process.platform === "win32"
+    ? join(pythonRoot, "python.exe")
+    : join(pythonRoot, "bin", "python");
+  return existsSync(executable) ? [executable] : null;
+}
+
+function describePythonAttempt(candidate, result) {
+  const command = candidate.join(" ");
+  if (result.error) {
+    return `${command} (${result.error.code ?? result.error.message})`;
+  }
+  return `${command} (exit ${result.status ?? "unknown"})`;
 }
 
 function run(command, args, cwd) {
   const result = spawnSync(command, args, {
     cwd,
-    stdio: "inherit",
-    shell: process.platform === "win32"
+    stdio: "inherit"
   });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);

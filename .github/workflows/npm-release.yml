@@ -36,16 +36,22 @@ jobs:
         include:
           - target: linux-x64
             os: ubuntu-24.04
+            arch: x64
           - target: linux-arm64
             os: ubuntu-24.04-arm
+            arch: arm64
           - target: darwin-x64
             os: macos-15-intel
+            arch: x64
           - target: darwin-arm64
             os: macos-15
+            arch: arm64
           - target: win32-x64
             os: windows-2025
+            arch: x64
           - target: win32-arm64
             os: windows-11-arm
+            arch: arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -62,8 +68,10 @@ jobs:
           cache: maven
 
       - uses: actions/setup-python@v5
+        id: setup-python
         with:
           python-version: "3.12"
+          architecture: ${{ matrix.arch }}
 
       - name: Resolve release version
         shell: bash
@@ -85,6 +93,8 @@ jobs:
       - name: Build platform vendor
         run: npm run build:vendor
         working-directory: packaging/platforms/${{ matrix.target }}
+        env:
+          MUSIO_PYTHON_EXE: ${{ steps.setup-python.outputs.python-path }}
 
       - name: Verify package
         run: npm pack --dry-run
