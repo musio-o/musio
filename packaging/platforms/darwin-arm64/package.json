@@ -1,0 +1,31 @@
+{
+  "name": "@mindforge-x/musio-darwin-arm64",
+  "version": "0.1.0",
+  "description": "macOS arm64 runtime package for Musio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mindforge-x/musio.git",
+    "directory": "packaging/platforms/darwin-arm64"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "vendor"
+  ],
+  "scripts": {
+    "build:vendor": "node ../../scripts/build-platform-package.js darwin-arm64",
+    "prepack": "node ../../scripts/verify-platform-package.js darwin-arm64",
+    "prepublishOnly": "node ../../scripts/verify-platform-package.js darwin-arm64"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

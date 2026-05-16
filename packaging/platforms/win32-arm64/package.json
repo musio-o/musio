@@ -1,0 +1,31 @@
+{
+  "name": "@mindforge-x/musio-win32-arm64",
+  "version": "0.1.0",
+  "description": "Windows arm64 runtime package for Musio",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mindforge-x/musio.git",
+    "directory": "packaging/platforms/win32-arm64"
+  },
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "vendor"
+  ],
+  "scripts": {
+    "build:vendor": "node ../../scripts/build-platform-package.js win32-arm64",
+    "prepack": "node ../../scripts/verify-platform-package.js win32-arm64",
+    "prepublishOnly": "node ../../scripts/verify-platform-package.js win32-arm64"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

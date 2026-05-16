@@ -1,14 +1,35 @@
 {
-  "name": "musio",
+  "name": "@mindforge-x/musio",
   "version": "0.1.0",
-  "private": true,
   "description": "Launcher for the Musio local music agent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mindforge-x/musio.git",
+    "directory": "packaging/npm"
+  },
   "bin": {
     "musio": "bin/musio.js"
   },
   "files": [
     "bin"
   ],
+  "scripts": {
+    "build:platform": "node ../scripts/build-platform-package.js",
+    "prepack": "node scripts/verify-main-package.js",
+    "prepublishOnly": "node scripts/verify-main-package.js"
+  },
+  "optionalDependencies": {
+    "@mindforge-x/musio-linux-x64": "0.1.0",
+    "@mindforge-x/musio-linux-arm64": "0.1.0",
+    "@mindforge-x/musio-darwin-x64": "0.1.0",
+    "@mindforge-x/musio-darwin-arm64": "0.1.0",
+    "@mindforge-x/musio-win32-x64": "0.1.0",
+    "@mindforge-x/musio-win32-arm64": "0.1.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   }

@@ -5,7 +5,7 @@ description = "Local QQ Music provider sidecar for Musio"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110",
-    "qqmusic-api-python>=0.5.2",
+    "qqmusic-api-python>=0.5.2,<0.6.0",
     "uvicorn[standard]>=0.27"
 ]
 
