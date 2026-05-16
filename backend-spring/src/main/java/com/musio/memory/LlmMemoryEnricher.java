@@ -9,6 +9,9 @@ import com.musio.agent.loop.AgentObservation;
 import com.musio.ai.SpringAiChatModelFactory;
 import com.musio.config.MusioConfig;
 import com.musio.config.MusioConfigService;
+import com.musio.model.AgentRecentRecommendedSong;
+import com.musio.model.AgentTaskMemory;
+import com.musio.model.AgentTaskRecommendationSlot;
 import com.musio.model.Song;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,27 +49,7 @@ public class LlmMemoryEnricher {
             return MemoryEnrichmentResult.empty();
         }
         MusioConfig.Ai ai = configService.config().ai();
-        Prompt prompt = new Prompt(List.of(
-                new SystemMessage(instruction()),
-                new UserMessage("""
-                        用户输入：
-                        %s
-
-                        任务目标：
-                        %s
-
-                        工具证据：
-                        %s
-
-                        最终回答：
-                        %s
-                        """.formatted(
-                        request.userMessage(),
-                        goalPreview(request.goal()),
-                        evidencePreview(request.loopEvidence()),
-                        truncate(request.finalAnswer())
-                ))
-        ));
+        Prompt prompt = buildPrompt(request);
         try {
             AgentLlmLogger.logRequest("memory_enrichment", ai, prompt);
             String content = chatModelFactory.chatClient(ai)
@@ -79,6 +62,34 @@ public class LlmMemoryEnricher {
             log.warn("LLM memory enrichment failed for user {}", request.userId(), e);
             return MemoryEnrichmentResult.empty();
         }
+    }
+
+    Prompt buildPrompt(MemoryWriteRequest request) {
+        return new Prompt(List.of(
+                new SystemMessage(instruction()),
+                new UserMessage("""
+                        用户输入：
+                        %s
+
+                        任务目标：
+                        %s
+
+                        短期任务记忆：
+                        %s
+
+                        工具证据：
+                        %s
+
+                        最终回答：
+                        %s
+                        """.formatted(
+                        request.userMessage(),
+                        goalPreview(request.goal()),
+                        taskMemoryPreview(request.taskMemory()),
+                        evidencePreview(request.loopEvidence()),
+                        truncate(request.finalAnswer())
+                ))
+        ));
     }
 
     Optional<MemoryEnrichmentResult> parseResult(String content) {
@@ -155,6 +166,8 @@ public class LlmMemoryEnricher {
                 你是 Musio 的异步记忆增强器。只输出 JSON 对象，不要 markdown，不要解释。
                 只提取对未来音乐推荐、偏好理解或任务延续有用的信息。
                 不要把寒暄、无音乐任务闲聊、临时情绪误判为长期偏好。
+                用户说“这首歌”“这个场景”“这种歌”“这个氛围”等指代表达时，必须优先用短期任务记忆解析上一轮歌曲、场景、推荐目标和工具结果。
+                如果短期任务记忆能解析出明确场景或歌曲，不要输出“场景未明确”。
                 preference scope 只能是 session、long_term、ignore。
                 musicInsights 只写评论、歌词、歌曲详情或推荐理由中对未来检索有用的事实。
 
@@ -180,6 +193,94 @@ public class LlmMemoryEnricher {
                 goal.musicTask(),
                 goal.requiredOutcomes()
         ).strip();
+    }
+
+    private String taskMemoryPreview(AgentTaskMemory memory) {
+        if (memory == null || isBlankTaskMemory(memory)) {
+            return "无";
+        }
+        StringBuilder builder = new StringBuilder();
+        appendLine(builder, "lastEffectiveRequest", memory.lastEffectiveRequest());
+        appendLine(builder, "currentTask", memory.currentTask());
+        appendLine(builder, "lastCompletedTaskType", memory.lastCompletedTaskType());
+        appendLine(builder, "lastTargetSong", songRef(memory.lastTargetSong()));
+        if (!memory.lastResultSongs().isEmpty()) {
+            appendLine(builder, "lastResultSongs", String.join("；", memory.lastResultSongs().stream()
+                    .limit(8)
+                    .map(this::songRef)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        if (!memory.lastRecommendationSlots().isEmpty()) {
+            appendLine(builder, "lastRecommendationSlots", String.join("；", memory.lastRecommendationSlots().stream()
+                    .limit(6)
+                    .map(this::recommendationSlotRef)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        if (!memory.lastObservationSummaries().isEmpty()) {
+            appendLine(builder, "lastObservationSummaries", String.join("；", memory.lastObservationSummaries().stream()
+                    .limit(6)
+                    .map(this::truncate)
+                    .toList()));
+        }
+        if (!memory.lastRequiredOutcomes().isEmpty()) {
+            appendLine(builder, "lastRequiredOutcomes", String.join("、", memory.lastRequiredOutcomes().stream().limit(10).toList()));
+        }
+        if (!memory.recentRecommendedSongs().isEmpty()) {
+            appendLine(builder, "recentRecommendedSongs", String.join("；", memory.recentRecommendedSongs().stream()
+                    .limit(8)
+                    .map(this::recentRecommendationRef)
+                    .filter(value -> !value.isBlank())
+                    .toList()));
+        }
+        String preview = builder.toString().strip();
+        return preview.isBlank() ? "无" : preview;
+    }
+
+    private boolean isBlankTaskMemory(AgentTaskMemory memory) {
+        return safe(memory.currentTask()).isBlank()
+                && safe(memory.lastEffectiveRequest()).isBlank()
+                && safe(memory.lastCompletedTaskType()).isBlank()
+                && memory.lastTargetSong() == null
+                && memory.lastResultSongs().isEmpty()
+                && memory.lastRecommendationSlots().isEmpty()
+                && memory.lastObservationSummaries().isEmpty()
+                && memory.lastRequiredOutcomes().isEmpty()
+                && memory.recentRecommendedSongs().isEmpty();
+    }
+
+    private String recommendationSlotRef(AgentTaskRecommendationSlot slot) {
+        if (slot == null) {
+            return "";
+        }
+        return "slot=%s type=%s target=%s count=%s songs=%s titles=%s".formatted(
+                safe(slot.slotId()),
+                safe(slot.targetType()),
+                safe(slot.target()),
+                slot.requestedCount(),
+                String.join(",", slot.songIds().stream().limit(6).toList()),
+                String.join("/", slot.songTitles().stream().limit(6).toList())
+        ).strip();
+    }
+
+    private String recentRecommendationRef(AgentRecentRecommendedSong song) {
+        if (song == null) {
+            return "";
+        }
+        return "%s - %s [%s] reason=%s".formatted(
+                safe(song.title()),
+                String.join("/", song.artists()),
+                safe(song.songId()),
+                truncate(song.reason())
+        ).strip();
+    }
+
+    private void appendLine(StringBuilder builder, String key, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        builder.append(key).append(": ").append(truncate(value)).append('\n');
     }
 
     private String evidencePreview(AgentLoopEvidence evidence) {

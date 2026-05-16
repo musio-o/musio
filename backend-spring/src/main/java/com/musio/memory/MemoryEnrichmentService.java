@@ -1,5 +1,6 @@
 package com.musio.memory;
 
+import com.musio.agent.AgentRunContext;
 import com.musio.agent.capability.AgentCapabilityRegistry;
 import com.musio.agent.loop.AgentLoopEvidence;
 import com.musio.agent.loop.AgentObservationStatus;
@@ -111,7 +112,9 @@ public class MemoryEnrichmentService {
             submittedKeys.clear();
             submittedKeys.add(key);
         }
-        queueExecutor.submit(() -> runJob(request));
+        String runId = AgentRunContext.runId().orElse("");
+        String userId = AgentRunContext.userId().orElse(request.userId());
+        queueExecutor.submit(() -> runJob(request, runId, userId));
     }
 
     boolean shouldEnrich(MemoryWriteRequest request) {
@@ -138,10 +141,21 @@ public class MemoryEnrichmentService {
     }
 
     void process(MemoryWriteRequest request) {
+        process(request, "", request == null ? "" : request.userId());
+    }
+
+    void process(MemoryWriteRequest request, String runId, String userId) {
         if (request == null || enricher == null) {
             return;
         }
-        Future<MemoryEnrichmentResult> future = modelExecutor.submit(() -> enricher.enrich(request));
+        Future<MemoryEnrichmentResult> future = modelExecutor.submit(() -> {
+            setRunContext(runId, userId);
+            try {
+                return enricher.enrich(request);
+            } finally {
+                AgentRunContext.clear();
+            }
+        });
         try {
             MemoryEnrichmentResult result = future.get(timeoutMs, TimeUnit.MILLISECONDS);
             writeResult(request, result);
@@ -160,8 +174,22 @@ public class MemoryEnrichmentService {
         modelExecutor.shutdownNow();
     }
 
-    private void runJob(MemoryWriteRequest request) {
-        process(request);
+    private void runJob(MemoryWriteRequest request, String runId, String userId) {
+        setRunContext(runId, userId);
+        try {
+            process(request, runId, userId);
+        } finally {
+            AgentRunContext.clear();
+        }
+    }
+
+    private void setRunContext(String runId, String userId) {
+        if (runId != null && !runId.isBlank()) {
+            AgentRunContext.setRunId(runId);
+        }
+        if (userId != null && !userId.isBlank()) {
+            AgentRunContext.setUserId(userId);
+        }
     }
 
     private void writeResult(MemoryWriteRequest request, MemoryEnrichmentResult result) {

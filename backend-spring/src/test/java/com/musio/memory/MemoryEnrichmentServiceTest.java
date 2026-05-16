@@ -1,6 +1,7 @@
 package com.musio.memory;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.musio.agent.AgentRunContext;
 import com.musio.agent.AgentGoal;
 import com.musio.agent.AgentRequiredOutcome;
 import com.musio.agent.loop.AgentLoopEvidence;
@@ -102,6 +103,23 @@ class MemoryEnrichmentServiceTest {
         assertEquals(1, enricher.calls.get());
     }
 
+    @Test
+    void submitPropagatesRunContextIntoAsyncEnricher() {
+        StubEnricher enricher = new StubEnricher(MemoryEnrichmentResult.empty());
+        MemoryEnrichmentService service = service(enricher, null);
+
+        AgentRunContext.setRunId("run-123");
+        AgentRunContext.setUserId("local");
+        try {
+            service.submit(request("我很喜欢这个场景的歌", null, AgentLoopEvidence.empty()));
+        } finally {
+            AgentRunContext.clear();
+        }
+
+        assertEquals("run-123", enricher.capturedRunId);
+        assertEquals("local", enricher.capturedUserId);
+    }
+
     private MemoryEnrichmentService service(StubEnricher enricher, Stores stores) {
         SameThreadExecutorService queueExecutor = new SameThreadExecutorService();
         SameThreadExecutorService modelExecutor = new SameThreadExecutorService();
@@ -165,6 +183,8 @@ class MemoryEnrichmentServiceTest {
     private static class StubEnricher extends LlmMemoryEnricher {
         private final MemoryEnrichmentResult result;
         private final AtomicInteger calls = new AtomicInteger();
+        private String capturedRunId = "";
+        private String capturedUserId = "";
         private boolean fail;
 
         private StubEnricher(MemoryEnrichmentResult result) {
@@ -175,6 +195,8 @@ class MemoryEnrichmentServiceTest {
         @Override
         public MemoryEnrichmentResult enrich(MemoryWriteRequest request) {
             calls.incrementAndGet();
+            capturedRunId = AgentRunContext.runId().orElse("");
+            capturedUserId = AgentRunContext.userId().orElse("");
             if (fail) {
                 throw new IllegalStateException("boom");
             }
