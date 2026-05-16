@@ -1,0 +1,133 @@
+name: npm release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "npm version to publish, e.g. 0.1.0-beta.0. Empty uses 0.1.0-beta.<run_number>."
+        required: false
+        type: string
+      tag:
+        description: "npm dist-tag"
+        required: true
+        default: "beta"
+        type: choice
+        options:
+          - beta
+          - next
+          - latest
+      dry_run:
+        description: "Run build and npm pack without publishing"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  platform:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            os: ubuntu-24.04
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+          - target: darwin-x64
+            os: macos-15-intel
+          - target: darwin-arm64
+            os: macos-15
+          - target: win32-x64
+            os: windows-2025
+          - target: win32-arm64
+            os: windows-11-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="0.1.0-beta.${{ github.run_number }}"
+          fi
+          echo "MUSIO_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Sync npm package versions
+        run: node packaging/scripts/set-npm-version.js "$MUSIO_RELEASE_VERSION"
+        shell: bash
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build platform vendor
+        run: npm run build:vendor
+        working-directory: packaging/platforms/${{ matrix.target }}
+
+      - name: Verify package
+        run: npm pack --dry-run
+        working-directory: packaging/platforms/${{ matrix.target }}
+
+      - name: Publish platform package
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --access public --provenance --tag "${{ inputs.tag }}"
+        working-directory: packaging/platforms/${{ matrix.target }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  launcher:
+    name: Publish launcher
+    runs-on: ubuntu-24.04
+    needs: platform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="0.1.0-beta.${{ github.run_number }}"
+          fi
+          echo "MUSIO_RELEASE_VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Sync npm package versions
+        run: node packaging/scripts/set-npm-version.js "$MUSIO_RELEASE_VERSION"
+
+      - name: Verify launcher package
+        run: npm pack --dry-run
+        working-directory: packaging/npm
+
+      - name: Publish launcher package
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --access public --provenance --tag "${{ inputs.tag }}"
+        working-directory: packaging/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,0 +1,59 @@
+name: package check
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "backend-spring/**"
+      - "cli-java/**"
+      - "frontend/**"
+      - "packaging/**"
+      - "providers/qqmusic-python-sidecar/**"
+      - "pom.xml"
+  workflow_dispatch:
+
+jobs:
+  linux-x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build Linux x64 platform package
+        run: npm run build:vendor
+        working-directory: packaging/platforms/linux-x64
+
+      - name: Verify launcher entry
+        run: |
+          MUSIO_RELEASE_ROOT="$PWD/packaging/platforms/linux-x64" \
+            node packaging/npm/bin/musio.js --version
+
+      - name: Verify sidecar binary starts
+        run: |
+          MUSIO_QQMUSIC_PORT=28888 timeout 8s \
+            packaging/platforms/linux-x64/vendor/sidecar/qqmusic-sidecar || test "$?" = "124"
+
+      - name: Verify platform npm package
+        run: npm pack --dry-run
+        working-directory: packaging/platforms/linux-x64
+
+      - name: Verify launcher npm package
+        run: npm pack --dry-run
+        working-directory: packaging/npm
