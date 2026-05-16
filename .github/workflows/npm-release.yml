@@ -73,6 +73,29 @@ jobs:
           python-version: "3.12"
           architecture: ${{ matrix.arch }}
 
+      - name: Install OpenSSL for Windows ARM64 Python builds
+        if: ${{ matrix.target == 'win32-arm64' }}
+        shell: pwsh
+        run: |
+          $triplet = "arm64-windows-static-md"
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) {
+            $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
+          }
+
+          if (-not (Test-Path (Join-Path $vcpkgRoot "vcpkg.exe"))) {
+            git clone https://github.com/microsoft/vcpkg.git $vcpkgRoot
+            & (Join-Path $vcpkgRoot "bootstrap-vcpkg.bat") -disableMetrics
+          }
+
+          & (Join-Path $vcpkgRoot "vcpkg.exe") install "openssl:$triplet" --clean-after-build
+          $opensslDir = Join-Path $vcpkgRoot "installed\$triplet"
+
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKG_ROOT=$vcpkgRoot"
+          Add-Content -Path $env:GITHUB_ENV -Value "VCPKGRS_TRIPLET=$triplet"
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_DIR=$opensslDir"
+          Add-Content -Path $env:GITHUB_ENV -Value "OPENSSL_STATIC=1"
+
       - name: Resolve release version
         shell: bash
         run: |
