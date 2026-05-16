@@ -31,14 +31,14 @@ public class StartupWorkflow {
 
         boolean servicesReady = processManager.startRequiredServices();
         if (!servicesReady) {
-            CliTimeline.warning("部分服务尚未 ready，请查看 .musio/run 下的日志");
+            CliTimeline.warning("部分服务尚未 ready，请查看日志：" + processManager.runDirectory());
         }
 
         CliTimeline.step("访问入口");
         CliTimeline.detail("Backend  " + config.backendBaseUrl());
-        CliTimeline.detail("Web      " + config.webBaseUrl());
+        CliTimeline.detail("Web      " + processManager.webBaseUrl());
 
-        URI loginUri = URI.create(config.webBaseUrl() + "/?sources=" + sourceIds(selectedSources));
+        URI loginUri = URI.create(processManager.webBaseUrl() + "/?sources=" + sourceIds(selectedSources));
         CliTimeline.step("登录页面");
         CliTimeline.detail(loginUri.toString());
         if (new BrowserLauncher().open(loginUri)) {

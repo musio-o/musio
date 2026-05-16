@@ -7,10 +7,23 @@ import java.util.Optional;
 
 public class ProjectRootResolver {
     public Path resolve() {
-        return fromCodeLocation()
+        return fromEnvironment()
+                .or(this::fromCodeLocation)
                 .or(() -> walkUp(Path.of("").toAbsolutePath()))
                 .orElse(Path.of("").toAbsolutePath())
                 .normalize();
+    }
+
+    private Optional<Path> fromEnvironment() {
+        String configured = System.getenv("MUSIO_HOME");
+        if (configured == null || configured.isBlank()) {
+            return Optional.empty();
+        }
+        Path home = Path.of(configured).toAbsolutePath().normalize();
+        if (isProjectRoot(home) || isReleaseHome(home)) {
+            return Optional.of(home);
+        }
+        return Optional.empty();
     }
 
     private Optional<Path> fromCodeLocation() {
@@ -33,7 +46,7 @@ public class ProjectRootResolver {
     private Optional<Path> walkUp(Path start) {
         Path current = start;
         while (current != null) {
-            if (isProjectRoot(current)) {
+            if (isProjectRoot(current) || isReleaseHome(current)) {
                 return Optional.of(current);
             }
             current = current.getParent();
@@ -41,7 +54,16 @@ public class ProjectRootResolver {
         return Optional.empty();
     }
 
-    private boolean isProjectRoot(Path path) {
+    public static boolean isReleaseHome(Path path) {
+        return Files.isRegularFile(path.resolve("dist").resolve("lib").resolve("musio-cli.jar"))
+                && Files.isRegularFile(path.resolve("dist").resolve("app").resolve("backend-spring.jar"))
+                && Files.isDirectory(path.resolve("dist")
+                        .resolve("providers")
+                        .resolve("qqmusic-python-sidecar")
+                        .resolve("app"));
+    }
+
+    public static boolean isProjectRoot(Path path) {
         return Files.isDirectory(path.resolve("scripts"))
                 && Files.isDirectory(path.resolve("backend-spring"))
                 && Files.isDirectory(path.resolve("frontend"))

@@ -1,14 +1,23 @@
 {
-  "name": "musio",
+  "name": "@mindforge-x/musio",
   "version": "0.1.0",
-  "private": true,
   "description": "Launcher for the Musio local music agent",
+  "license": "MIT",
   "bin": {
     "musio": "bin/musio.js"
   },
   "files": [
-    "bin"
+    "bin",
+    "dist"
   ],
+  "scripts": {
+    "build:dist": "node scripts/prepare-dist.js",
+    "prepack": "node scripts/verify-dist.js",
+    "prepublishOnly": "node scripts/verify-dist.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18"
   }

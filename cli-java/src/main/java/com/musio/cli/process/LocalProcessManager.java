@@ -8,13 +8,20 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 public class LocalProcessManager {
     private final Path root;
     private final Path runDirectory;
+    private final Path runtimeDirectory;
     private final MusioCliConfig config;
+    private final boolean releaseMode;
     private final HttpProbe httpProbe = new HttpProbe();
 
     public LocalProcessManager() {
@@ -24,35 +31,65 @@ public class LocalProcessManager {
     public LocalProcessManager(MusioCliConfig config) {
         this.config = config;
         this.root = new ProjectRootResolver().resolve();
-        this.runDirectory = root.resolve(".musio").resolve("run");
+        this.releaseMode = ProjectRootResolver.isReleaseHome(root);
+        this.runDirectory = runDirectory(root, config, releaseMode);
+        this.runtimeDirectory = musioHome(config).resolve("runtime");
     }
 
     public boolean startRequiredServices() {
         createRunDirectory();
         CliTimeline.step("启动本地服务");
-        boolean sidecarReady = startIfNeeded(LocalService.QQMUSIC_SIDECAR);
-        boolean backendReady = startIfNeeded(LocalService.BACKEND);
-        boolean frontendReady = startIfNeeded(LocalService.FRONTEND);
-        return sidecarReady && backendReady && frontendReady;
+        boolean ready = true;
+        for (LocalService service : servicesToStart()) {
+            ready = startIfNeeded(service) && ready;
+        }
+        return ready;
     }
 
     public Path root() {
         return root;
     }
 
+    public Path runDirectory() {
+        return runDirectory;
+    }
+
+    public String webBaseUrl() {
+        return releaseMode ? config.backendBaseUrl() : config.webBaseUrl();
+    }
+
     public int stopServices() {
-        ProcessBuilder builder = isWindows() ? windowsStopProcess() : unixStopProcess();
-        builder.directory(root.toFile());
-        builder.inheritIO();
-        try {
-            Process process = builder.start();
-            return process.waitFor();
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to stop Musio services from " + root, e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return 1;
+        CliTimeline.step("停止本地服务");
+        int failures = 0;
+        for (LocalService service : servicesToStop()) {
+            CliTimeline.branch(service.displayName());
+            Path pidPath = pidPath(service);
+            if (!Files.isRegularFile(pidPath)) {
+                CliTimeline.muted("没有找到 pid 文件");
+                continue;
+            }
+            try {
+                long pid = Long.parseLong(Files.readString(pidPath).trim());
+                Optional<ProcessHandle> handle = ProcessHandle.of(pid);
+                if (handle.isEmpty() || !handle.get().isAlive()) {
+                    Files.deleteIfExists(pidPath);
+                    CliTimeline.success("进程已不在运行");
+                    continue;
+                }
+                if (stopProcessTree(handle.get())) {
+                    Files.deleteIfExists(pidPath);
+                    CliTimeline.success("已停止 pid=" + pid);
+                } else {
+                    failures++;
+                    CliTimeline.error("未能停止 pid=" + pid);
+                }
+            } catch (IOException | NumberFormatException e) {
+                failures++;
+                CliTimeline.error("读取 pid 失败：" + pidPath);
+            }
         }
+        CliTimeline.end(failures == 0 ? "Musio 服务已停止" : "Musio 服务停止未完全成功");
+        return failures == 0 ? 0 : 1;
     }
 
     private boolean startIfNeeded(LocalService service) {
@@ -69,11 +106,19 @@ public class LocalProcessManager {
         }
 
         CliTimeline.pending("正在启动");
-        Process process = launch(service);
+        Process process;
+        try {
+            process = launch(service);
+        } catch (IllegalStateException e) {
+            CliTimeline.error(e.getMessage());
+            return false;
+        }
         writePid(service, process);
-        if (service == LocalService.BACKEND) {
+        if (!releaseMode && service == LocalService.BACKEND) {
             CliTimeline.muted("Spring 首次启动可能会下载 Maven 依赖，最长等待 "
                     + service.timeout().toSeconds() + "s");
+        } else if (releaseMode && service == LocalService.QQMUSIC_SIDECAR) {
+            CliTimeline.muted("首次启动可能会准备 Python sidecar 运行环境");
         }
 
         if (httpProbe.waitUntilReady(healthUri, service.timeout())) {
@@ -90,8 +135,10 @@ public class LocalProcessManager {
     }
 
     private Process launch(LocalService service) {
-        ProcessBuilder builder = isWindows() ? windowsProcess(service) : unixProcess(service);
-        builder.directory(root.toFile());
+        ProcessBuilder builder = releaseMode ? releaseProcess(service) : devProcess(service);
+        if (builder.directory() == null) {
+            builder.directory(root.toFile());
+        }
         configureEnvironment(builder.environment());
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logPath(service).toFile()));
         builder.redirectErrorStream(true);
@@ -104,15 +151,37 @@ public class LocalProcessManager {
 
     private void configureEnvironment(Map<String, String> environment) {
         environment.put("MUSIO_CONFIG", config.configPath().toString());
+        environment.put("MUSIO_HOME", root.toString());
+        environment.put("MUSIO_RUNTIME_MODE", releaseMode ? "release" : "dev");
         environment.put("MUSIO_SERVER_HOST", config.serverHost());
         environment.put("MUSIO_SERVER_PORT", Integer.toString(config.serverPort()));
         environment.put("MUSIO_WEB_HOST", config.webHost());
         environment.put("MUSIO_WEB_PORT", Integer.toString(config.webPort()));
         environment.put("MUSIO_BACKEND_BASE_URL", config.backendBaseUrl());
-        environment.put("MUSIO_CORS_ALLOWED_ORIGINS", config.corsAllowedOrigins());
+        environment.put("MUSIO_CORS_ALLOWED_ORIGINS", corsAllowedOrigins());
+        environment.put("MUSIO_BACKEND_LOG_FILE", logPath(LocalService.BACKEND).toString());
         environment.put("MUSIO_QQMUSIC_HOST", config.qqMusicSidecarHost());
         environment.put("MUSIO_QQMUSIC_PORT", Integer.toString(config.qqMusicSidecarPort()));
         environment.put("MUSIO_QQMUSIC_SIDECAR_BASE_URL", config.qqMusicSidecarBaseUrl());
+    }
+
+    private ProcessBuilder devProcess(LocalService service) {
+        return isWindows() ? windowsProcess(service) : unixProcess(service);
+    }
+
+    private ProcessBuilder releaseProcess(LocalService service) {
+        return switch (service) {
+            case QQMUSIC_SIDECAR -> releaseSidecarProcess();
+            case BACKEND -> new ProcessBuilder(javaExecutable(), "-jar", releaseBackendJar().toString());
+            case FRONTEND -> throw new IllegalStateException("生产模式不再启动独立 React frontend");
+        };
+    }
+
+    private ProcessBuilder releaseSidecarProcess() {
+        Path sidecarDirectory = releaseSidecarDirectory();
+        Path python = prepareReleaseSidecarPython(sidecarDirectory);
+        return new ProcessBuilder(python.toString(), "-m", "app.main")
+                .directory(sidecarDirectory.toFile());
     }
 
     private ProcessBuilder unixProcess(LocalService service) {
@@ -149,26 +218,56 @@ public class LocalProcessManager {
         );
     }
 
-    private ProcessBuilder unixStopProcess() {
-        return new ProcessBuilder(
-                "/bin/bash",
-                root.resolve("scripts/stop-dev.sh").toString(),
-                Integer.toString(config.serverPort()),
-                Integer.toString(config.webPort()),
-                Integer.toString(config.qqMusicSidecarPort())
+    private Path prepareReleaseSidecarPython(Path sidecarDirectory) {
+        Path venvPython = sidecarVenvPython();
+        if (Files.isRegularFile(venvPython)) {
+            return venvPython;
+        }
+        try {
+            Files.createDirectories(runtimeDirectory);
+        } catch (IOException e) {
+            throw new IllegalStateException("无法创建 Musio runtime 目录：" + runtimeDirectory, e);
+        }
+
+        List<String> pythonCommand = findPythonCommand()
+                .orElseThrow(() -> new IllegalStateException(
+                        "未找到 Python 3.11+。请安装 Python 3.11+，或设置 MUSIO_PYTHON_EXE。"));
+
+        CliTimeline.muted("创建 Python venv: " + sidecarVenvDirectory());
+        runSetupCommand(append(pythonCommand, "-m", "venv", sidecarVenvDirectory().toString()), sidecarDirectory);
+        CliTimeline.muted("安装 QQMusic sidecar 依赖");
+        runSetupCommand(
+                List.of(
+                        venvPython.toString(),
+                        "-m",
+                        "pip",
+                        "install",
+                        "-r",
+                        sidecarDirectory.resolve("requirements.txt").toString()
+                ),
+                sidecarDirectory
         );
+        return venvPython;
     }
 
-    private ProcessBuilder windowsStopProcess() {
-        return new ProcessBuilder(
-                "powershell.exe",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                root.resolve("scripts\\win\\stop-windows.ps1").toString(),
-                "-Ports",
-                config.serverPort() + "," + config.webPort() + "," + config.qqMusicSidecarPort()
-        );
+    private void runSetupCommand(List<String> command, Path directory) {
+        ProcessBuilder builder = new ProcessBuilder(command);
+        builder.directory(directory.toFile());
+        configureEnvironment(builder.environment());
+        builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logPath(LocalService.QQMUSIC_SIDECAR).toFile()));
+        builder.redirectErrorStream(true);
+        try {
+            Process process = builder.start();
+            int exitCode = process.waitFor();
+            if (exitCode != 0) {
+                throw new IllegalStateException("准备 QQMusic sidecar 运行环境失败，日志：" + logPath(LocalService.QQMUSIC_SIDECAR));
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("启动 QQMusic sidecar 环境准备命令失败", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("QQMusic sidecar 环境准备被中断", e);
+        }
     }
 
     private void createRunDirectory() {
@@ -182,7 +281,7 @@ public class LocalProcessManager {
     private void writePid(LocalService service, Process process) {
         try {
             Files.writeString(
-                    runDirectory.resolve(fileStem(service) + ".pid"),
+                    pidPath(service),
                     Long.toString(process.pid()),
                     StandardOpenOption.CREATE,
                     StandardOpenOption.TRUNCATE_EXISTING
@@ -196,8 +295,144 @@ public class LocalProcessManager {
         return runDirectory.resolve(fileStem(service) + ".log");
     }
 
+    private Path pidPath(LocalService service) {
+        return runDirectory.resolve(fileStem(service) + ".pid");
+    }
+
     private String fileStem(LocalService service) {
         return service.processName();
+    }
+
+    private List<LocalService> servicesToStart() {
+        if (releaseMode) {
+            return List.of(LocalService.QQMUSIC_SIDECAR, LocalService.BACKEND);
+        }
+        return List.of(LocalService.QQMUSIC_SIDECAR, LocalService.BACKEND, LocalService.FRONTEND);
+    }
+
+    private List<LocalService> servicesToStop() {
+        if (releaseMode) {
+            return List.of(LocalService.BACKEND, LocalService.QQMUSIC_SIDECAR);
+        }
+        return List.of(LocalService.FRONTEND, LocalService.BACKEND, LocalService.QQMUSIC_SIDECAR);
+    }
+
+    private boolean stopProcessTree(ProcessHandle handle) {
+        List<ProcessHandle> descendants = new ArrayList<>(handle.descendants().toList());
+        Collections.reverse(descendants);
+        for (ProcessHandle descendant : descendants) {
+            descendant.destroy();
+        }
+        handle.destroy();
+        if (waitForExit(handle)) {
+            return true;
+        }
+        for (ProcessHandle descendant : descendants) {
+            if (descendant.isAlive()) {
+                descendant.destroyForcibly();
+            }
+        }
+        handle.destroyForcibly();
+        return waitForExit(handle);
+    }
+
+    private boolean waitForExit(ProcessHandle handle) {
+        try {
+            handle.onExit().get(5, TimeUnit.SECONDS);
+            return !handle.isAlive();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private String corsAllowedOrigins() {
+        if (!releaseMode) {
+            return config.corsAllowedOrigins();
+        }
+        return config.backendBaseUrl() + "," + config.corsAllowedOrigins();
+    }
+
+    private Path releaseBackendJar() {
+        return root.resolve("dist").resolve("app").resolve("backend-spring.jar");
+    }
+
+    private Path releaseSidecarDirectory() {
+        return root.resolve("dist").resolve("providers").resolve("qqmusic-python-sidecar");
+    }
+
+    private Path sidecarVenvDirectory() {
+        return runtimeDirectory.resolve("qqmusic-python-sidecar-venv");
+    }
+
+    private Path sidecarVenvPython() {
+        Path venv = sidecarVenvDirectory();
+        if (isWindows()) {
+            return venv.resolve("Scripts").resolve("python.exe");
+        }
+        return venv.resolve("bin").resolve("python");
+    }
+
+    private Optional<List<String>> findPythonCommand() {
+        List<List<String>> candidates = new ArrayList<>();
+        String configured = System.getenv("MUSIO_PYTHON_EXE");
+        if (configured != null && !configured.isBlank()) {
+            candidates.add(List.of(configured));
+        }
+        if (isWindows()) {
+            candidates.add(List.of("py", "-3.11"));
+            candidates.add(List.of("python"));
+            candidates.add(List.of("python3"));
+        } else {
+            candidates.add(List.of("python3"));
+            candidates.add(List.of("python"));
+        }
+        return candidates.stream()
+                .filter(this::isPython311OrNewer)
+                .findFirst();
+    }
+
+    private boolean isPython311OrNewer(List<String> command) {
+        ProcessBuilder builder = new ProcessBuilder(append(
+                command,
+                "-c",
+                "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+        ));
+        builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+        builder.redirectError(ProcessBuilder.Redirect.DISCARD);
+        try {
+            return builder.start().waitFor() == 0;
+        } catch (IOException e) {
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private List<String> append(List<String> command, String... args) {
+        List<String> result = new ArrayList<>(command);
+        result.addAll(List.of(args));
+        return result;
+    }
+
+    private String javaExecutable() {
+        String executable = isWindows() ? "java.exe" : "java";
+        return Path.of(System.getProperty("java.home"), "bin", executable).toString();
+    }
+
+    private static Path runDirectory(Path root, MusioCliConfig config, boolean releaseMode) {
+        if (releaseMode) {
+            return musioHome(config).resolve("run");
+        }
+        return root.resolve(".musio").resolve("run");
+    }
+
+    private static Path musioHome(MusioCliConfig config) {
+        Path parent = config.configPath().getParent();
+        if (parent != null) {
+            return parent;
+        }
+        return Path.of(System.getProperty("user.home"), ".musio").toAbsolutePath().normalize();
     }
 
     private boolean isWindows() {
