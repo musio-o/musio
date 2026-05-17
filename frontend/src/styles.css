@@ -546,8 +546,9 @@ h3 {
   justify-content: center;
   padding: 28px;
   overflow-y: auto;
-  background: linear-gradient(120deg, rgba(0, 0, 0, 0.94), rgba(8, 19, 24, 0.92));
-  backdrop-filter: blur(18px);
+  background: linear-gradient(120deg, rgba(0, 0, 0, 0.42), rgba(8, 19, 24, 0.38));
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
 }
 
 .login-prompt-stage {

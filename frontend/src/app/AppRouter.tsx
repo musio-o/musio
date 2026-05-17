@@ -15,7 +15,7 @@ import { SourceSetupPage } from "../features/source-setup/SourceSetupPage";
 import { AppRoute } from "./routes";
 
 export function AppRouter() {
-  const [route, setRoute] = useState<AppRoute>("setup");
+  const [route, setRoute] = useState<AppRoute>("workbench");
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([]);
   const [events, setEvents] = useState<EventLog[]>([]);
