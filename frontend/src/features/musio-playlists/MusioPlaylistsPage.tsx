@@ -81,7 +81,7 @@ export function MusioPlaylistsPage({
       <div className="nothing-playlists-header">
         <div>
           <p className="eyebrow">LOCAL PLAYLIST STORAGE</p>
-          <h2>Musio 歌单</h2>
+          <h2>本地收藏库</h2>
         </div>
         <div className="nothing-playlist-metrics" aria-label="Musio 歌单统计">
           <span><strong>{loading ? "--" : playlists.length}</strong> PLAYLISTS</span>

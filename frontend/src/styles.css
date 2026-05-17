@@ -159,6 +159,13 @@ h1 {
   letter-spacing: 0;
 }
 
+.topbar-title-display {
+  font-family: var(--font-display);
+  font-size: clamp(36px, 4vw, 56px);
+  font-weight: 700;
+  line-height: 0.92;
+}
+
 h2 {
   color: var(--text-display);
   font-size: 20px;

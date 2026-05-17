@@ -235,7 +235,7 @@ export function AppRouter() {
           <header className="topbar">
             <div>
               <p className="eyebrow">Musio 本地音乐 Agent</p>
-              <h1>{pageTitle}</h1>
+              <h1 className={route === "playlists" ? "topbar-title topbar-title-display" : "topbar-title"}>{pageTitle}</h1>
               <p className="config-line">{pageSubcopy}</p>
             </div>
             <div className={`status-pill ${backendLabel === "ok" ? "online" : ""}`}>
