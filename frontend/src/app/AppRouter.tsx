@@ -59,10 +59,12 @@ export function AppRouter() {
       .then((statuses) => {
         setProviderStatuses(statuses);
         setProviderStatusesLoaded(true);
+        return statuses;
       })
       .catch(() => {
         setProviderStatuses([]);
         setProviderStatusesLoaded(true);
+        return [];
       });
   }, []);
 
@@ -207,9 +209,24 @@ export function AppRouter() {
   const handleLoginPromptAuthenticated = useCallback(async () => {
     setLoginPromptOpen(false);
     setLoginPromptDismissed(false);
-    await refreshProviderStatuses();
     setRoute("workbench");
+    const statuses = await refreshProviderStatuses();
     addEvent({ id: crypto.randomUUID(), name: "login", detail: "QQ 音乐登录成功" });
+    const qqStatus = statuses.find((item) => sourceKey(item.provider) === QQ_PROVIDER);
+    if (!qqStatus?.authenticated || qqStatus.musicGeneState === "READY") {
+      return;
+    }
+    try {
+      await api.providerMusicGene(QQ_PROVIDER);
+      addEvent({ id: crypto.randomUUID(), name: "music_gene", detail: "QQ 音乐基因已自动生成" });
+      await refreshProviderStatuses();
+    } catch (error) {
+      addEvent({
+        id: crypto.randomUUID(),
+        name: "music_gene",
+        detail: error instanceof Error ? error.message : "自动生成音乐基因失败"
+      });
+    }
   }, [addEvent, refreshProviderStatuses]);
 
   return (
