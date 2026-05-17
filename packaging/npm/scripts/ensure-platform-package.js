@@ -47,6 +47,7 @@ const result = spawnSync(npmCommand(), [
   "--no-save",
   "--package-lock=false",
   "--ignore-scripts",
+  "--include=optional",
   "--no-audit",
   "--fund=false",
   spec

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
 const { createRequire } = require("node:module");
 const { dirname, join, resolve } = require("node:path");
 
 const requireFromHere = createRequire(__filename);
+const packageRoot = resolve(__dirname, "..");
 
 const PLATFORM_PACKAGE_BY_TARGET = {
   "linux-x64": "@mindforge-x/musio-linux-x64",
@@ -78,20 +79,26 @@ function resolveReleaseRoot(targetName) {
   }
 
   const platformPackage = PLATFORM_PACKAGE_BY_TARGET[targetName];
-  try {
-    const packageJsonPath = requireFromHere.resolve(`${platformPackage}/package.json`);
+  const packageJsonPath = resolvePlatformPackageManifest(platformPackage);
+  if (packageJsonPath) {
     return dirname(packageJsonPath);
-  } catch {
-    const localRoot = resolve(__dirname, "..");
-    if (hasReleaseDirectory(localRoot, "vendor") || hasReleaseDirectory(localRoot, "dist")) {
-      return localRoot;
-    }
-    fail(
-      `Missing optional dependency ${platformPackage}.`,
-      "Reinstall Musio: npm install -g @mindforge-x/musio",
-      "For local project installs, run: npm install @mindforge-x/musio"
-    );
   }
+
+  const localRoot = packageRoot;
+  if (hasReleaseDirectory(localRoot, "vendor") || hasReleaseDirectory(localRoot, "dist")) {
+    return localRoot;
+  }
+
+  const installedPackageJsonPath = installPlatformPackage(platformPackage);
+  if (installedPackageJsonPath) {
+    return dirname(installedPackageJsonPath);
+  }
+
+  fail(
+    `Missing optional dependency ${platformPackage}.`,
+    "Reinstall Musio: npm install -g @mindforge-x/musio",
+    "For local project installs, run: npm install @mindforge-x/musio"
+  );
 }
 
 function resolveReleaseDirectory(root) {
@@ -130,6 +137,51 @@ function resolveJavaCommand(releaseDirectory) {
   }
 
   return "java";
+}
+
+function resolvePlatformPackageManifest(packageName) {
+  try {
+    return requireFromHere.resolve(`${packageName}/package.json`);
+  } catch {
+    return null;
+  }
+}
+
+function installPlatformPackage(packageName) {
+  if (process.env.MUSIO_SKIP_PLATFORM_INSTALL === "1") {
+    return null;
+  }
+
+  const spec = `${packageName}@${platformPackageVersion(packageName)}`;
+  console.error(`Installing Musio platform runtime: ${spec}`);
+  const result = spawnSync(npmCommand(), [
+    "install",
+    "--no-save",
+    "--package-lock=false",
+    "--ignore-scripts",
+    "--include=optional",
+    "--no-audit",
+    "--fund=false",
+    spec
+  ], {
+    cwd: packageRoot,
+    stdio: "inherit",
+    shell: process.platform === "win32"
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+  return resolvePlatformPackageManifest(packageName);
+}
+
+function platformPackageVersion(packageName) {
+  const pkg = require(join(packageRoot, "package.json"));
+  return pkg.optionalDependencies?.[packageName] ?? pkg.version;
+}
+
+function npmCommand() {
+  return process.platform === "win32" ? "npm.cmd" : "npm";
 }
 
 function fail(...lines) {
