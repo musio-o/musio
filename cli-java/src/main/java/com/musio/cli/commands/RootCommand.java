@@ -7,7 +7,7 @@ import java.util.concurrent.Callable;
 @Command(
         name = "musio",
         mixinStandardHelpOptions = true,
-        version = "musio 0.1.0-SNAPSHOT",
+        versionProvider = MusioVersionProvider.class,
         subcommands = {
                 WebCommand.class,
                 ChatCommand.class,

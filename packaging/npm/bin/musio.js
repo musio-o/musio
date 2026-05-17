@@ -21,6 +21,7 @@ const releaseRoot = resolveReleaseRoot(target);
 const releaseDirectory = resolveReleaseDirectory(releaseRoot);
 const javaCommand = resolveJavaCommand(releaseDirectory);
 const cliJar = join(releaseDirectory, "lib", "musio-cli.jar");
+const musioVersion = process.env.MUSIO_VERSION || packageVersion();
 
 if (!existsSync(cliJar)) {
   fail(
@@ -36,10 +37,11 @@ if (!existsSync(javaCommand) && javaCommand !== "java") {
   );
 }
 
-const child = spawn(javaCommand, ["-jar", cliJar, ...process.argv.slice(2)], {
+const child = spawn(javaCommand, ["-Dmusio.version=" + musioVersion, "-jar", cliJar, ...process.argv.slice(2)], {
   stdio: "inherit",
   env: {
     ...process.env,
+    MUSIO_VERSION: musioVersion,
     MUSIO_HOME: releaseRoot
   }
 });
@@ -178,6 +180,11 @@ function installPlatformPackage(packageName) {
 function platformPackageVersion(packageName) {
   const pkg = require(join(packageRoot, "package.json"));
   return pkg.optionalDependencies?.[packageName] ?? pkg.version;
+}
+
+function packageVersion() {
+  const pkg = require(join(packageRoot, "package.json"));
+  return pkg.version;
 }
 
 function npmCommand() {
