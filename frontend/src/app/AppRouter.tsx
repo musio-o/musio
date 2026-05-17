@@ -208,6 +208,7 @@ export function AppRouter() {
     setLoginPromptOpen(false);
     setLoginPromptDismissed(false);
     await refreshProviderStatuses();
+    setRoute("workbench");
     addEvent({ id: crypto.randomUUID(), name: "login", detail: "QQ 音乐登录成功" });
   }, [addEvent, refreshProviderStatuses]);
 
@@ -500,33 +501,45 @@ function LoginPromptModal({ open, onClose, onAuthenticated, onEvent }: LoginProm
 
   return (
     <div className="login-prompt-overlay" role="presentation">
-      <section className="login-prompt-modal" role="dialog" aria-modal="true" aria-labelledby="login-prompt-title">
-        <button className="login-prompt-close" type="button" aria-label="稍后再说" onClick={onClose}>
-          <X size={18} />
-        </button>
-        <div className="login-prompt-heading">
-          <p className="eyebrow">QQ 音乐</p>
-          <h2 id="login-prompt-title">请先登录</h2>
-          <p>登录后即可使用完整功能</p>
+      <div className="login-prompt-stage" role="dialog" aria-modal="true" aria-labelledby="login-prompt-title">
+        <div className="login-prompt-intro">
+          <h2>选择登录方式</h2>
+          <p>不同平台账号独立，登录后可体验完整功能</p>
         </div>
-        <div className="qr-box login-prompt-qr">
-          {hasQr ? <img src={login?.qrCodeDataUrl ?? ""} alt="QQ 音乐登录二维码" /> : <QrCode size={96} />}
+        <div className="login-method-tabs" aria-label="登录方式">
+          <span className="active">QQ 扫码登录</span>
         </div>
-        <p className="auth-copy login-prompt-copy">{copy}</p>
-        <div className="login-prompt-status">
-          <span>{stateLabel}</span>
-          {busy ? <span>准备二维码</span> : null}
-        </div>
-        <div className="auth-actions login-prompt-actions">
-          <button className="primary-action" type="button" onClick={() => void startLogin()} disabled={busy}>
-            {hasQr ? <RotateCcw size={18} /> : <QrCode size={18} />}
-            {hasQr ? "刷新二维码" : "开始扫码登录"}
+        <section className="login-prompt-modal">
+          <button className="login-prompt-close" type="button" aria-label="稍后再说" onClick={onClose}>
+            <X size={18} />
           </button>
-          <button className="ghost-action" type="button" onClick={onClose}>
-            稍后再说
-          </button>
-        </div>
-      </section>
+          <div className="login-provider-mark">
+            <span>QQ</span>
+            <strong>QQ 音乐</strong>
+          </div>
+          <div className="login-prompt-heading">
+            <h3 id="login-prompt-title">请先登录</h3>
+            <p>登录后即可使用完整功能</p>
+          </div>
+          <div className="qr-box login-prompt-qr">
+            {hasQr ? <img src={login?.qrCodeDataUrl ?? ""} alt="QQ 音乐登录二维码" /> : <QrCode size={96} />}
+          </div>
+          <p className="auth-copy login-prompt-copy">{copy}</p>
+          <div className="login-prompt-status">
+            <span>{stateLabel}</span>
+            {busy ? <span>准备二维码</span> : null}
+          </div>
+          <div className="auth-actions login-prompt-actions">
+            <button className="login-refresh-button" type="button" onClick={() => void startLogin()} disabled={busy}>
+              {hasQr ? <RotateCcw size={18} /> : <QrCode size={18} />}
+              {hasQr ? "刷新二维码" : "开始扫码登录"}
+            </button>
+            <button className="login-later-button" type="button" onClick={onClose}>
+              稍后再说
+            </button>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }
