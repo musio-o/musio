@@ -2255,6 +2255,8 @@ textarea:focus,
 .musio-playlist-detail > .song-list {
   flex: 1 1 auto;
   min-height: 0;
+  align-content: start;
+  grid-auto-rows: minmax(78px, max-content);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: rgba(232, 232, 232, 0.24) transparent;
@@ -2263,6 +2265,7 @@ textarea:focus,
 .song-row.musio-playlist-row {
   position: relative;
   min-height: 78px;
+  align-self: start;
   display: grid;
   grid-template-columns: 42px 48px minmax(0, 1fr) auto;
   align-items: center;
