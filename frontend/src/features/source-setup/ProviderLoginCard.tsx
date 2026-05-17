@@ -134,7 +134,7 @@ function loginCopy(connectionState?: string, musicGeneState?: string, state?: st
   switch (state) {
     case "CREATED":
     case "NOT_SCANNED":
-      return "二维码已生成，请使用 QQ 音乐扫码登录。";
+      return "二维码已生成，请使用 QQ 扫码登录。";
     case "SCANNED":
       return "已扫码，请在 QQ 音乐中确认登录。";
     case "DONE":

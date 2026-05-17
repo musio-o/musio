@@ -1286,7 +1286,7 @@ function loginPromptCopy(state?: string) {
   switch (state) {
     case "CREATED":
     case "NOT_SCANNED":
-      return "请使用 QQ 音乐扫码登录。";
+      return "请使用 QQ 扫码登录";
     case "SCANNED":
       return "已扫码，请在 QQ 音乐中确认登录。";
     case "DONE":
