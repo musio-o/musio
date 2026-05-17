@@ -302,8 +302,8 @@ h3 {
 .source-hero {
   display: grid;
   grid-template-columns: minmax(260px, 0.8fr) minmax(320px, 1fr);
-  align-items: end;
-  gap: 48px;
+  align-items: center;
+  gap: 32px;
   padding: 24px 0 20px;
 }
 
@@ -329,16 +329,51 @@ h3 {
 }
 
 .source-hero-copy {
-  display: grid;
-  justify-items: start;
-  gap: 20px;
+  min-width: 0;
 }
 
-.source-hero-copy p {
+.source-hero-cta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 22px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-visible);
+  border-left: 3px solid var(--text-display);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.44);
+}
+
+.source-hero-cta div {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.source-hero-cta span {
+  color: var(--text-disabled);
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.source-hero-cta h2 {
+  color: var(--text-display);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.source-hero-cta p {
   max-width: 620px;
-  color: var(--text-primary);
-  font-size: 18px;
-  line-height: 1.45;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.source-hero-cta .primary-action {
+  white-space: nowrap;
 }
 
 .source-readiness-panel {
@@ -2173,6 +2208,19 @@ textarea:focus,
   .topbar,
   .source-hero {
     grid-template-columns: 1fr;
+  }
+
+  .source-hero {
+    gap: 22px;
+  }
+
+  .source-hero-cta {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .source-hero-cta .primary-action {
+    justify-self: start;
   }
 
   .topbar {

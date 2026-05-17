@@ -220,12 +220,18 @@ export function SourceSetupPage({
           </div>
         </div>
         <div className="source-hero-copy">
-          <p>
-            登录是能力检查，不是硬性门槛。至少一个音乐源就绪后可以进入核心页面，也可以先进入受限模式，稍后再连接音乐源。
-          </p>
-          <button className="primary-action" type="button" onClick={onContinue}>
-            {readyCount > 0 ? "进入核心页面" : "进入受限模式"}
-          </button>
+          <div className="source-hero-cta">
+            <div>
+              <span>进入策略</span>
+              <h2>可以先进入，也可以稍后连接</h2>
+              <p>
+                登录是能力检查，不是硬性门槛。至少一个音乐源就绪后可以进入核心页面，也可以先进入受限模式，稍后再连接音乐源。
+              </p>
+            </div>
+            <button className="primary-action" type="button" onClick={onContinue}>
+              {readyCount > 0 ? "进入核心页面" : "进入受限模式"}
+            </button>
+          </div>
         </div>
       </section>
 
