@@ -6,7 +6,7 @@ RUN_DIR="$ROOT_DIR/.musio/run"
 if [ "$#" -gt 0 ]; then
   PORTS=("$@")
 else
-  PORTS=(18765 18766 18767 18768)
+  PORTS=(18765 18766 18767)
 fi
 PROCESS_PATTERN='app\.main|spring-boot:run|vite|npm run dev|mvn'
 

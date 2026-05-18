@@ -167,28 +167,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1
 
 ## WSL 注意事项
 
-如果在 WSL 中运行项目，但 Java 和 Maven 实际安装在 Windows，`scripts/dev-backend.sh` 会回退到 `scripts/mvn-win-jdk21.sh`。默认 Windows 路径是：
+如果在 WSL 中运行源码开发脚本，建议把 JDK 21+、Maven、Node.js 和 Python 都安装在同一个 WSL 环境中。`scripts/dev-backend.sh` 会直接使用当前环境 PATH 中的 `java` 和 `mvn`；如果找不到，会提示安装依赖。
 
-```text
-D:\Env\JDK21\bin\java.exe
-D:\Env\Maven\apache-maven-3.6.1-bin\apache-maven-3.6.1
+如果依赖主要安装在 Windows 环境中，建议改用 Windows PowerShell：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1
 ```
 
-路径不一致时设置：
-
-```bash
-export MUSIO_JAVA_EXE_WIN='D:\Your\JDK21\bin\java.exe'
-export MUSIO_MAVEN_HOME_WIN='D:\Your\Maven'
-```
-
-如果后端通过 Windows JDK 启动，Java 看到的用户目录是 Windows 用户目录，因此默认配置文件会变成：
-
-```text
-C:\Users\<you>\.musio\config.toml
-/mnt/c/Users/<you>/.musio/config.toml
-```
-
-为了避免路径混乱，推荐显式指定配置文件：
+为了避免 WSL 和 Windows 用户目录混用导致配置路径不一致，可以显式指定配置文件：
 
 ```bash
 export MUSIO_CONFIG="$HOME/.musio/config.toml"
@@ -375,8 +362,6 @@ export MUSIO_QQMUSIC_PROXY=http://127.0.0.1:7890
 | `MUSIO_ACTIVE_SOURCE` | 当前默认音乐源 ID。 |
 | `MUSIO_BACKEND_LOG_FILE` | Spring backend 日志文件路径。 |
 | `MUSIO_PYTHON_EXE` | 指定 Python 3.11+ 解释器，主要用于 Windows 或发布包 fallback。 |
-| `MUSIO_JAVA_EXE_WIN` | WSL 调用 Windows JDK 时的 `java.exe` 路径。 |
-| `MUSIO_MAVEN_HOME_WIN` | WSL 调用 Windows Maven 时的 Maven Home。 |
 
 ## 构建
 
