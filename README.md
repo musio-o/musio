@@ -1,4 +1,6 @@
-# Musio
+<p align="center">
+  <img src="docs/musio-logo.svg">
+</p>
 
 Musio 是一个本地优先的音乐 Agent。它会在本机启动音乐源适配器、Spring Boot 后端、React Web 控制台和 Java CLI 启动器，让用户可以通过网页或命令行连接 QQ 音乐、搜索歌曲、播放音乐、查看歌词/评论，并让 Agent 基于本地记忆和音乐源能力完成推荐、歌单和对话任务。
 
