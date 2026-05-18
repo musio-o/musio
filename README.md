@@ -461,3 +461,7 @@ AI 配置支持动态重载；端口、存储目录、sidecar 地址等运行时
 java -jar cli-java/target/musio-cli.jar stop
 java -jar cli-java/target/musio-cli.jar
 ```
+
+## 友情链接
+
+- [linux.do - 新的理想型社区](https://linux.do/)
