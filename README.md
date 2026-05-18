@@ -45,6 +45,8 @@ npx musio
 
 发布包会通过可选平台依赖安装匹配当前系统和 CPU 架构的运行时包。启动后直接执行 `musio`，CLI 会创建配置文件、选择音乐源、启动本地服务并打开 Web 页面。
 
+![musio-start](musio-start.gif)
+
 常用命令：
 
 ```bash
