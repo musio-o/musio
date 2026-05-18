@@ -10,7 +10,7 @@ $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $RunDir = Join-Path $Root ".musio\run"
 
 if (-not $Ports -or $Ports.Count -eq 0) {
-    $Ports = @(18765, 18766, 18767, 18768)
+    $Ports = @(18765, 18766, 18767)
 }
 
 $ProcessPattern = if ($Pattern) { $Pattern } else { "app\.main|spring-boot:run|vite|npm run dev|mvn\.cmd" }

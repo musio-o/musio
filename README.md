@@ -46,6 +46,8 @@ npx musio
 
 发布包会通过可选平台依赖安装匹配当前系统和 CPU 架构的运行时包。启动后直接执行 `musio`，CLI 会创建配置文件、选择音乐源、启动本地服务并打开 Web 页面。
 
+![musio-start](musio-start.gif)
+
 常用命令：
 
 ```bash
@@ -374,8 +376,6 @@ export MUSIO_QQMUSIC_PROXY=http://127.0.0.1:7890
 | `MUSIO_ACTIVE_SOURCE` | 当前默认音乐源 ID。 |
 | `MUSIO_BACKEND_LOG_FILE` | Spring backend 日志文件路径。 |
 | `MUSIO_PYTHON_EXE` | 指定 Python 3.11+ 解释器，主要用于 Windows 或发布包 fallback。 |
-| `MUSIO_JAVA_EXE_WIN` | WSL 调用 Windows JDK 时的 `java.exe` 路径。 |
-| `MUSIO_MAVEN_HOME_WIN` | WSL 调用 Windows Maven 时的 Maven Home。 |
 
 ## 构建
 
