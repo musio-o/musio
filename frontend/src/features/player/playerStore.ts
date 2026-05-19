@@ -9,6 +9,8 @@ const SPECTRUM_MAX_HZ = 16_000;
 const PLAYBACK_RECOVERY_DELAY_MS = 2600;
 const PLAYBACK_RECOVERY_MAX_ATTEMPTS = 3;
 const PLAYBACK_PROGRESS_STALL_MS = 7000;
+const DESKTOP_SPECTRUM_UPDATE_MS = 70;
+const MOBILE_SPECTRUM_UPDATE_MS = 220;
 const IDLE_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const QUIET_SPECTRUM_LEVELS = Array.from({ length: SPECTRUM_BAR_COUNT }, () => 6);
 const PLAYER_QUEUE_STORAGE_KEY = "musio.player.queue.v1";
@@ -271,6 +273,7 @@ export function usePlayerStore() {
 
   function startSpectrumMonitor(audio: HTMLAudioElement) {
     const analyserReady = ensureAudioAnalyser(audio);
+    const spectrumUpdateMs = spectrumUpdateIntervalMs();
     stopSpectrumMonitor(false);
     spectrumLastUpdateRef.current = 0;
 
@@ -292,7 +295,7 @@ export function usePlayerStore() {
         schedulePlaybackRecovery(0);
       }
 
-      if (timestamp - spectrumLastUpdateRef.current > 70) {
+      if (timestamp - spectrumLastUpdateRef.current > spectrumUpdateMs) {
         spectrumLastUpdateRef.current = timestamp;
         const levels = analyserReady ? readAnalyserSpectrum(timestamp) : fallbackSpectrum(timestamp);
         setState((current) => ({ ...current, spectrumLevels: levels }));
@@ -301,6 +304,12 @@ export function usePlayerStore() {
     }
 
     spectrumFrameRef.current = window.requestAnimationFrame(tick);
+  }
+
+  function spectrumUpdateIntervalMs() {
+    return window.matchMedia("(max-width: 760px), (orientation: portrait), (pointer: coarse)").matches
+      ? MOBILE_SPECTRUM_UPDATE_MS
+      : DESKTOP_SPECTRUM_UPDATE_MS;
   }
 
   function stopSpectrumMonitor(reset = true) {
